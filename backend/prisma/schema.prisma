@@ -1,0 +1,348 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int                     @id @default(autoincrement())
+  name         String
+  email        String                  @unique
+  passwordHash String                  @map("password_hash")
+  role         String                  @default("admin")
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+  interactions CommercialInteraction[]
+  campaigns    SearchCampaign[]
+
+  @@map("users")
+}
+
+model SearchCampaign {
+  id                  Int                  @id @default(autoincrement())
+  name                String
+  niche               String
+  city                String
+  state               String
+  country             String               @default("BR")
+  status              CampaignStatus       @default(draft)
+  targetQuantity      Int?                 @map("target_quantity")
+  startedAt           DateTime?            @map("started_at")
+  finishedAt          DateTime?            @map("finished_at")
+  createdBy           Int?                 @map("created_by")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  discoveryCandidates DiscoveryCandidate[]
+  leads               Lead[]
+  user                User?                @relation(fields: [createdBy], references: [id])
+
+  @@index([createdBy], map: "search_campaigns_created_by_fkey")
+  @@map("search_campaigns")
+}
+
+model Lead {
+  id                   Int                     @id @default(autoincrement())
+  campaignId           Int?                    @map("campaign_id")
+  businessName         String                  @map("business_name")
+  personName           String?                 @map("person_name")
+  niche                String
+  documentNumber       String?                 @map("document_number")
+  documentStatus       String?                 @map("document_status")
+  professionalRegistry String?                 @map("professional_registry")
+  city                 String
+  state                String
+  country              String                  @default("BR")
+  address              String?
+  phone                String?
+  whatsapp             String?
+  email                String?
+  websiteUrl           String?                 @map("website_url")
+  instagramUrl         String?                 @map("instagram_url")
+  facebookUrl          String?                 @map("facebook_url")
+  linkedinUrl          String?                 @map("linkedin_url")
+  googleMapsUrl        String?                 @map("google_maps_url")
+  source               String?                 @default("manual")
+  rawDataJson          Json?                   @map("raw_data_json")
+  createdAt            DateTime                @default(now()) @map("created_at")
+  updatedAt            DateTime                @updatedAt @map("updated_at")
+  interactions         CommercialInteraction[]
+  discoveryCandidates  DiscoveryCandidate[]
+  messages             GeneratedMessage[]
+  reviews              LeadAiReview[]
+  digitalPresence      LeadDigitalPresence?
+  embeddings           LeadEmbedding[]
+  scores               LeadScore[]
+  socialSnapshots      LeadSocialSnapshot[]
+  websiteSnapshots     LeadWebsiteSnapshot[]
+  campaign             SearchCampaign?         @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId], map: "leads_campaign_id_fkey")
+  @@map("leads")
+}
+
+model LeadDigitalPresence {
+  id                        Int      @id @default(autoincrement())
+  leadId                    Int      @unique @map("lead_id")
+  hasWebsite                Boolean  @default(false) @map("has_website")
+  websiteUrl                String?  @map("website_url")
+  websitePlatform           String?  @map("website_platform")
+  hasInstagram              Boolean  @default(false) @map("has_instagram")
+  hasFacebook               Boolean  @default(false) @map("has_facebook")
+  hasLinkedin               Boolean  @default(false) @map("has_linkedin")
+  hasGoogleMaps             Boolean  @default(false) @map("has_google_maps")
+  hasWhatsapp               Boolean  @default(false) @map("has_whatsapp")
+  hasLinktree               Boolean  @default(false) @map("has_linktree")
+  hasOnlySocialMedia        Boolean  @default(false) @map("has_only_social_media")
+  websiteHttpStatus         Int?     @map("website_http_status")
+  websiteLoadTimeMs         Int?     @map("website_load_time_ms")
+  websiteHasSsl             Boolean? @map("website_has_ssl")
+  websiteIsMobileFriendly   Boolean? @map("website_is_mobile_friendly")
+  websiteHasCta             Boolean? @map("website_has_cta")
+  websiteHasWhatsappCta     Boolean? @map("website_has_whatsapp_cta")
+  websiteHasContactForm     Boolean? @map("website_has_contact_form")
+  websiteHasSeoTitle        Boolean? @map("website_has_seo_title")
+  websiteHasMetaDescription Boolean? @map("website_has_meta_description")
+  websiteDetectedIssuesJson Json     @map("website_detected_issues_json")
+  websiteQualityScore       Int?     @map("website_quality_score")
+  socialPresenceScore       Int?     @map("social_presence_score")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+  lead                      Lead     @relation(fields: [leadId], references: [id])
+
+  @@map("lead_digital_presence")
+}
+
+model LeadWebsiteSnapshot {
+  id                 Int      @id @default(autoincrement())
+  leadId             Int      @map("lead_id")
+  url                String
+  httpStatus         Int?     @map("http_status")
+  title              String?
+  metaDescription    String?  @map("meta_description") @db.Text
+  h1                 String?
+  headingsJson       Json     @map("headings_json")
+  textSummary        String?  @map("text_summary") @db.Text
+  textSample         String?  @map("text_sample") @db.Text
+  platform           String?
+  hasSsl             Boolean  @default(false) @map("has_ssl")
+  loadTimeMs         Int?     @map("load_time_ms")
+  hasWhatsapp        Boolean  @default(false) @map("has_whatsapp")
+  hasContactForm     Boolean  @default(false) @map("has_contact_form")
+  hasCta             Boolean  @default(false) @map("has_cta")
+  hasLocation        Boolean  @default(false) @map("has_location")
+  hasServices        Boolean  @default(false) @map("has_services")
+  hasTestimonials    Boolean  @default(false) @map("has_testimonials")
+  detectedIssuesJson Json     @map("detected_issues_json")
+  rawMetricsJson     Json     @map("raw_metrics_json")
+  snapshotHash       String   @map("snapshot_hash")
+  aiReviewJson       Json?    @map("ai_review_json")
+  createdAt          DateTime @default(now()) @map("created_at")
+  lead               Lead     @relation(fields: [leadId], references: [id])
+
+  @@index([leadId], map: "lead_website_snapshots_lead_id_fkey")
+  @@map("lead_website_snapshots")
+}
+
+model LeadSocialSnapshot {
+  id                 Int      @id @default(autoincrement())
+  leadId             Int      @map("lead_id")
+  platform           String
+  profileUrl         String   @map("profile_url")
+  bioText            String?  @map("bio_text") @db.Text
+  externalLink       String?  @map("external_link")
+  hasWhatsapp        Boolean  @default(false) @map("has_whatsapp")
+  hasWebsiteLink     Boolean  @default(false) @map("has_website_link")
+  estimatedPostCount Int?     @map("estimated_post_count")
+  lastActivitySignal String?  @map("last_activity_signal")
+  contentSignalsJson Json     @map("content_signals_json")
+  rawMetricsJson     Json     @map("raw_metrics_json")
+  snapshotHash       String   @map("snapshot_hash")
+  aiReviewJson       Json?    @map("ai_review_json")
+  createdAt          DateTime @default(now()) @map("created_at")
+  lead               Lead     @relation(fields: [leadId], references: [id])
+
+  @@index([leadId], map: "lead_social_snapshots_lead_id_fkey")
+  @@map("lead_social_snapshots")
+}
+
+model LeadEmbedding {
+  id              Int      @id @default(autoincrement())
+  leadId          Int?     @map("lead_id")
+  embeddingType   String   @map("embedding_type")
+  sourceText      String   @map("source_text") @db.Text
+  embeddingVector Json     @map("embedding_vector")
+  model           String
+  metadataJson    Json?    @map("metadata_json")
+  createdAt       DateTime @default(now()) @map("created_at")
+  lead            Lead?    @relation(fields: [leadId], references: [id])
+
+  @@index([leadId], map: "lead_embeddings_lead_id_fkey")
+  @@map("lead_embeddings")
+}
+
+model DiscoveryCandidate {
+  id              Int            @id @default(autoincrement())
+  campaignId      Int            @map("campaign_id")
+  leadId          Int?           @map("lead_id")
+  title           String
+  url             String
+  snippet         String         @db.Text
+  source          String
+  priority        String
+  isPotentialLead Boolean        @map("is_potential_lead")
+  reason          String         @db.Text
+  status          String
+  createdAt       DateTime       @default(now()) @map("created_at")
+  campaign        SearchCampaign @relation(fields: [campaignId], references: [id])
+  lead            Lead?          @relation(fields: [leadId], references: [id])
+
+  @@index([campaignId], map: "discovery_candidates_campaign_id_fkey")
+  @@index([leadId], map: "discovery_candidates_lead_id_fkey")
+  @@map("discovery_candidates")
+}
+
+model ScoreWeightVersion {
+  id        Int      @id @default(autoincrement())
+  version   String
+  weights   Json
+  rationale Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("score_weight_versions")
+}
+
+model LeadScore {
+  id                       Int              @id @default(autoincrement())
+  leadId                   Int              @map("lead_id")
+  objectiveScore           Int              @map("objective_score")
+  aiCommercialScore        Int?             @map("ai_commercial_score")
+  digitalPresenceScore     Int?             @map("digital_presence_score")
+  embeddingSimilarityScore Int?             @map("embedding_similarity_score")
+  finalScore               Int              @map("final_score")
+  temperature              Temperature
+  recommendedOffer         RecommendedOffer @map("recommended_offer")
+  scoreBreakdownJson       Json             @map("score_breakdown_json")
+  aiReasoning              String?          @map("ai_reasoning") @db.Text
+  createdAt                DateTime         @default(now()) @map("created_at")
+  updatedAt                DateTime         @updatedAt @map("updated_at")
+  lead                     Lead             @relation(fields: [leadId], references: [id])
+
+  @@index([leadId], map: "lead_scores_lead_id_fkey")
+  @@map("lead_scores")
+}
+
+model LeadAiReview {
+  id            Int      @id @default(autoincrement())
+  leadId        Int?     @map("lead_id")
+  analysisType  String   @map("analysis_type") @db.VarChar(64)
+  model         String   @db.VarChar(64)
+  promptVersion String   @map("prompt_version") @db.VarChar(64)
+  inputHash     String   @map("input_hash") @db.Char(64)
+  inputJson     Json     @map("input_json")
+  outputJson    Json     @map("output_json")
+  tokensInput   Int?     @map("tokens_input")
+  tokensOutput  Int?     @map("tokens_output")
+  costEstimate  Decimal? @map("cost_estimate") @db.Decimal(10, 6)
+  summary       String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+  lead          Lead?    @relation(fields: [leadId], references: [id])
+
+  @@index([leadId], map: "lead_ai_reviews_lead_id_fkey")
+  @@map("lead_ai_reviews")
+}
+
+model AiAnalysisCache {
+  id            Int      @id @default(autoincrement())
+  entityType    String   @map("entity_type") @db.VarChar(64)
+  entityId      String   @map("entity_id") @db.VarChar(64)
+  analysisType  String   @map("analysis_type") @db.VarChar(64)
+  model         String   @db.VarChar(64)
+  promptVersion String   @map("prompt_version") @db.VarChar(64)
+  inputHash     String   @map("input_hash") @db.Char(64)
+  inputJson     Json     @map("input_json")
+  outputJson    Json     @map("output_json")
+  tokensInput   Int?     @map("tokens_input")
+  tokensOutput  Int?     @map("tokens_output")
+  costEstimate  Decimal? @map("cost_estimate") @db.Decimal(10, 6)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([entityType, entityId, analysisType, model, promptVersion, inputHash], map: "ai_analysis_cache_unique")
+  @@map("ai_analysis_cache")
+}
+
+model CommercialInteraction {
+  id             Int               @id @default(autoincrement())
+  leadId         Int               @map("lead_id")
+  status         InteractionStatus
+  contactChannel String?           @map("contact_channel")
+  contactedAt    DateTime?         @map("contacted_at")
+  responseAt     DateTime?         @map("response_at")
+  notes          String?           @db.Text
+  nextActionAt   DateTime?         @map("next_action_at")
+  createdBy      Int?              @map("created_by")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  user           User?             @relation(fields: [createdBy], references: [id])
+  lead           Lead              @relation(fields: [leadId], references: [id])
+
+  @@index([createdBy], map: "commercial_interactions_created_by_fkey")
+  @@index([leadId], map: "commercial_interactions_lead_id_fkey")
+  @@map("commercial_interactions")
+}
+
+model GeneratedMessage {
+  id          Int      @id @default(autoincrement())
+  leadId      Int      @map("lead_id")
+  messageType String   @map("message_type")
+  channel     String
+  content     String   @db.Text
+  tone        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  lead        Lead     @relation(fields: [leadId], references: [id])
+
+  @@index([leadId], map: "generated_messages_lead_id_fkey")
+  @@map("generated_messages")
+}
+
+enum CampaignStatus {
+  draft
+  running
+  paused
+  completed
+  failed
+}
+
+enum Temperature {
+  hot
+  warm
+  medium
+  cold
+  discard
+}
+
+enum RecommendedOffer {
+  landing_page
+  institutional_site
+  redesign
+  seo_local
+  google_business_optimization
+  digital_presence_organization
+  maintenance
+  no_offer
+}
+
+enum InteractionStatus {
+  not_contacted
+  contacted
+  replied
+  interested
+  meeting_scheduled
+  proposal_sent
+  won
+  lost
+  no_response
+  invalid_contact
+}

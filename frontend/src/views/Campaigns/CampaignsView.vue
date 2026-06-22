@@ -1,22 +1,25 @@
 <template>
-  <section>
+  <section class="fade-in-up">
     <header class="page-header">
       <div>
         <h1>Campanhas</h1>
         <p>Crie campanhas por nicho e cidade para organizar a prospecção.</p>
       </div>
-      <button class="secondary" @click="load">Atualizar</button>
+      <button class="secondary" @click="load" title="Recarregar dados das campanhas">
+        <i class="ri-refresh-line"></i> Atualizar
+      </button>
     </header>
 
-    <form class="panel" @submit.prevent="create">
-      <h2>Nova campanha</h2>
-      <div class="grid cols-4">
+    <!-- Nova Campanha (Horizontal, no topo) -->
+    <form class="panel" style="margin-bottom: 24px;" @submit.prevent="create">
+      <h2><i class="ri-add-circle-line"></i> Nova Campanha</h2>
+      <div class="grid cols-4" style="gap: 16px;">
         <label>
-          Nome
+          Nome da Campanha
           <input v-model="form.name" required placeholder="Psicólogos Londrina" />
         </label>
         <label>
-          Nicho
+          Nicho de Atuação
           <input v-model="form.niche" required placeholder="Psicólogos" />
         </label>
         <label>
@@ -24,189 +27,314 @@
           <input v-model="form.city" required placeholder="Londrina" />
         </label>
         <label>
-          Estado
+          Estado (UF)
           <input v-model="form.state" required placeholder="PR" />
         </label>
       </div>
-      <div class="actions" style="margin-top: 14px">
-        <button type="submit">Criar campanha</button>
+      <div class="actions" style="margin-top: 16px;">
+        <button type="submit" title="Salvar e criar nova campanha no sistema"><i class="ri-save-line"></i> Criar Campanha</button>
       </div>
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="lastResult" class="muted">{{ lastResult }}</p>
+      <p v-if="error" class="error mt-2"><i class="ri-error-warning-line"></i> {{ error }}</p>
+      <p v-if="lastResult" class="muted mt-2" style="font-size: 13px;"><i class="ri-checkbox-circle-line" style="color: var(--accent-green)"></i> {{ lastResult }}</p>
     </form>
 
-    <div class="panel">
-      <h2>Lista</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>Nicho</th>
-            <th>Cidade</th>
-            <th>Status</th>
-            <th>Leads</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="campaign in campaigns" :key="campaign.id">
-            <td>{{ campaign.name }}</td>
-            <td>{{ campaign.niche }}</td>
-            <td>{{ campaign.city }}/{{ campaign.state }}</td>
-            <td>{{ formatCampaignStatus(campaign.status) }}</td>
-            <td>
-              {{ campaign.metrics?.leadsFound ?? 0 }}
-              <span class="muted">{{ formatTemperature("hot") }} {{ campaign.metrics?.hotLeads ?? 0 }} / {{ formatTemperature("warm") }} {{ campaign.metrics?.warmLeads ?? 0 }}</span>
-            </td>
-            <td>
-              <div class="actions">
-                <RouterLink :to="`/leads?campaignId=${campaign.id}`">Ver leads</RouterLink>
-                <button class="secondary" @click="action(campaign.id, 'start')">Iniciar</button>
-                <button class="secondary" @click="action(campaign.id, 'pause')">Pausar</button>
-                <button class="secondary" :disabled="isDiscovering(campaign.id)" @click="discover(campaign.id)">
-                  {{ isDiscovering(campaign.id) ? "Descobrindo..." : "Descobrir" }}
-                </button>
-                <button
-                  class="danger"
-                  :disabled="!isDiscovering(campaign.id)"
-                  @click="stopDiscovery(campaign.id)"
-                >
-                  Interromper
-                </button>
-                <button class="secondary" @click="embeddings(campaign.id)">Embeddings</button>
-                <button class="secondary" @click="validateCampaign(campaign.id)">Validar</button>
-                <button class="secondary" @click="downloadCsv(campaign.id)">CSV</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <!-- Lista de Campanhas (Abaixo da criação) -->
+    <div class="panel" style="margin-bottom: 24px; position: relative;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+        <h2><i class="ri-list-check-2"></i> Campanhas Ativas</h2>
+        
+        <!-- Meta Ads Style Contextual Toolbar -->
+        <div v-if="hasSelection" class="fade-in" style="display: flex; align-items: center; gap: 12px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.2); padding: 6px 16px; border-radius: var(--radius-md);">
+          <span style="font-size: 13px; font-weight: 700; color: #38bdf8; display: inline-flex; align-items: center; gap: 4px;">
+            <i class="ri-checkbox-line"></i> {{ selectedCount }} selecionada(s)
+          </span>
+          <div style="height: 18px; width: 1px; background: rgba(255, 255, 255, 0.15);"></div>
+          
+          <button type="button" class="secondary" style="min-height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; gap: 4px;" @click="bulkStart" title="Iniciar campanhas selecionadas">
+            <i class="ri-play-fill" style="color: var(--accent-green)"></i> Iniciar
+          </button>
+          <button type="button" class="secondary" style="min-height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; gap: 4px;" @click="bulkPause" title="Pausar campanhas selecionadas">
+            <i class="ri-pause-fill" style="color: var(--accent-warm)"></i> Pausar
+          </button>
+          <button type="button" class="secondary" style="min-height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; gap: 4px;" @click="bulkEmbeddings" title="Recalcular embeddings das campanhas selecionadas">
+            <i class="ri-brain-line"></i> Vetores
+          </button>
+          <button type="button" class="secondary" style="min-height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; gap: 4px;" :disabled="selectedCount !== 1" @click="bulkValidate" title="Validar metas comerciais da campanha selecionada">
+            <i class="ri-checkbox-circle-line"></i> Validar
+          </button>
+          <button type="button" class="secondary" style="min-height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; gap: 4px;" @click="bulkDownloadCsv" title="Exportar base de leads das campanhas selecionadas em CSV">
+            <i class="ri-download-2-line"></i> CSV
+          </button>
+          
+          <button type="button" class="secondary" style="min-height: 28px; padding: 0 6px; border-radius: 6px; font-size: 12px; border-color: transparent; background: transparent;" @click="clearSelection" title="Limpar seleção de campanhas">
+            <i class="ri-close-line"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <GenericGrid
+          :data="campaigns"
+          :columns="campaignColumns"
+          :selectable="true"
+          v-model:selectedMap="selectedCampaigns"
+          row-key="id"
+        >
+          <template #name="{ row }">
+            <span class="text-highlight"><strong>{{ row.name }}</strong></span>
+          </template>
+          <template #city="{ row }">
+            {{ row.city }}/{{ row.state }}
+          </template>
+          <template #status="{ row }">
+            <span class="badge" :class="row.status === 'running' ? 'hot' : row.status === 'completed' ? 'medium' : 'cold'">
+              {{ formatCampaignStatus(row.status) }}
+            </span>
+          </template>
+          <template #leads="{ row }">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <strong>{{ row.metrics?.leadsFound ?? 0 }}</strong>
+              <span style="font-size: 11px;" class="muted">
+                🔥{{ row.metrics?.hotLeads ?? 0 }} / ⚡{{ row.metrics?.warmLeads ?? 0 }}
+              </span>
+            </div>
+          </template>
+          <template #actions="{ row }">
+            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+              <RouterLink :to="`/leads?campaignId=${row.id}`" class="channel-tag active" title="Visualizar lista completa de leads desta campanha" style="text-decoration: none; padding: 6px 12px; display: inline-flex; align-items: center; min-height: auto; margin: 0;">
+                <i class="ri-eye-line" style="margin-right: 4px;"></i> Ver Leads
+              </RouterLink>
+
+              <select
+                v-model="discoveryLevels[row.id]"
+                :disabled="isDiscovering(row.id)"
+                title="Nível da busca"
+                style="min-height: 32px; width: 105px; padding: 2px 6px; border-radius: 8px; font-size: 12px; margin: 0;"
+              >
+                <option value="nano">Nano (5 leads)</option>
+                <option value="quick">Quick (10 leads)</option>
+                <option value="medium">Medium (30 leads)</option>
+                <option value="deep">Deep (60 leads)</option>
+              </select>
+
+              <button type="button" :disabled="isDiscovering(row.id)" style="min-height: 32px; padding: 0 12px; border-radius: 8px; font-size: 12px;" @click="discover(row.id, selectedDiscoveryLevel(row.id))" title="Disparar busca automática por novos leads nesta campanha">
+                <i class="ri-radar-line"></i> Buscar
+              </button>
+              <button
+                type="button"
+                class="danger"
+                :disabled="!isDiscovering(row.id)"
+                style="min-height: 32px; padding: 0 12px; border-radius: 8px; font-size: 12px;"
+                @click="stopDiscovery(row.id)"
+                title="Interromper busca automática em andamento"
+              >
+                <i class="ri-stop-circle-line"></i> Parar
+              </button>
+            </div>
+          </template>
+        </GenericGrid>
+      </div>
     </div>
 
-    <div v-if="liveDiscovery" class="panel">
-      <div class="page-header" style="margin-bottom: 18px">
+    <!-- Monitor da Automação (Real-Time Scraper Monitor) -->
+    <div v-if="liveDiscovery" class="panel fade-in" style="margin-bottom: 24px;">
+      <div class="page-header" style="margin-bottom: 16px;">
         <div>
-          <h2>Monitor da automação</h2>
+          <h2><i class="ri-terminal-box-line"></i> Monitor da Automação em Tempo Real</h2>
           <p>
-            {{ liveDiscovery.running ? "Execução em andamento" : "Última execução concluída" }}
-            <span v-if="liveDiscovery.currentProfessional"> · {{ liveDiscovery.currentProfessional }}</span>
+            {{ liveDiscovery.running ? "Executando varredura" : "Última execução finalizada" }}
+            <span v-if="liveDiscovery.currentProfessional" style="color: var(--primary-hover);"> · Foco: {{ liveDiscovery.currentProfessional }}</span>
           </p>
         </div>
         <button
           v-if="watchingCampaignId"
           class="secondary"
           @click="refreshDiscoveryStatus(watchingCampaignId)"
+          title="Forçar a atualização instantânea do monitor de status e logs"
         >
-          Atualizar painel
+          <i class="ri-refresh-line"></i> Atualizar Monitor
         </button>
       </div>
 
-      <div class="grid cols-4">
+      <div class="grid cols-4" style="margin-bottom: 20px;">
         <div class="metric">
-          <span>Etapa atual</span>
-          <strong>{{ liveDiscovery.currentStep ?? "-" }}</strong>
+          <span>Etapa Atual</span>
+          <strong style="font-size: 15px; color: var(--primary-hover); margin-top: 8px;">{{ liveDiscovery.currentStep ?? "-" }}</strong>
         </div>
         <div class="metric">
-          <span>Resultados iniciais</span>
+          <span>Coletados (Scraper)</span>
           <strong>{{ liveDiscovery.stats.collected }}</strong>
         </div>
         <div class="metric">
-          <span>Profissionais extraídos</span>
+          <span>Extraídos (Filtro)</span>
           <strong>{{ liveDiscovery.stats.extractedProfessionals }}</strong>
         </div>
         <div class="metric">
-          <span>Leads inseridos</span>
-          <strong>{{ liveDiscovery.stats.inserted }}</strong>
+          <span>Leads Inseridos</span>
+          <strong style="color: var(--accent-green)">{{ liveDiscovery.stats.inserted }}</strong>
         </div>
       </div>
 
-      <div class="grid cols-2" style="margin-top: 18px">
-        <div class="panel" style="margin: 0; max-height: 520px; overflow: auto">
-          <h3>Log em tempo real</h3>
-          <div
-            v-for="event in [...liveDiscovery.events].reverse()"
-            :key="event.id"
-            style="padding: 12px 0; border-bottom: 1px solid rgba(148, 163, 184, 0.18)"
-          >
-            <p style="margin: 0 0 6px">
-              <strong>{{ event.title }}</strong>
-              <span class="muted"> · {{ formatEventTime(event.at) }}</span>
-            </p>
-            <p v-if="event.leadName" class="muted" style="margin: 0 0 6px">{{ event.leadName }}</p>
-            <p v-if="event.detail" style="margin: 0 0 6px">{{ event.detail }}</p>
-            <p v-if="event.url" class="muted" style="margin: 0 0 6px; word-break: break-all">{{ event.url }}</p>
-            <details v-if="event.payload">
-              <summary>Enviado para IA / contexto</summary>
-              <pre>{{ stringifyJson(event.payload) }}</pre>
-            </details>
-            <details v-if="event.response">
-              <summary>Resposta / achados</summary>
-              <pre>{{ stringifyJson(event.response) }}</pre>
-            </details>
+      <div class="grid cols-2">
+        <!-- Log Monospace Terminal -->
+        <div>
+          <h3 class="mb-2" style="font-size: 13px; text-transform: uppercase; color: var(--text-muted);"><i class="ri-computer-line"></i> Linha de Eventos</h3>
+          <div class="terminal-console">
+            <div class="terminal-header">
+              <span>radar-console-logs v1.0.0</span>
+              <div class="terminal-indicator">
+                <span class="terminal-dot" :class="{ pulsing: liveDiscovery.running }"></span>
+                <span>{{ liveDiscovery.running ? 'ONLINE' : 'OFFLINE' }}</span>
+              </div>
+            </div>
+            
+            <div
+              v-for="event in [...liveDiscovery.events].reverse()"
+              :key="event.id"
+              class="terminal-log-item"
+            >
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #60a5fa;">[{{ formatEventTime(event.at) }}]</span>
+                <span style="font-weight: 700; color: #34d399;">{{ event.title }}</span>
+              </div>
+              <p v-if="event.leadName" style="color: var(--accent-warm); margin: 2px 0 0 10px; font-size: 12px;">↳ Lead: {{ event.leadName }}</p>
+              <p v-if="event.detail" style="color: #e2e8f0; margin: 4px 0 0 10px; font-size: 12px;">{{ event.detail }}</p>
+              <p v-if="event.url" style="color: #94a3b8; margin: 2px 0 0 10px; font-size: 11px; word-break: break-all;">🔗 {{ event.url }}</p>
+              
+              <details v-if="event.payload" style="margin-left: 10px;">
+                <summary>Visualizar Payload de Entrada</summary>
+                <pre>{{ stringifyJson(event.payload) }}</pre>
+              </details>
+              <details v-if="event.response" style="margin-left: 10px;">
+                <summary>Visualizar Resposta da IA</summary>
+                <pre>{{ stringifyJson(event.response) }}</pre>
+              </details>
+            </div>
+            <div v-if="!liveDiscovery.events?.length" style="color: var(--text-muted); padding: 20px 0; text-align: center;">Nenhum evento registrado ainda.</div>
           </div>
         </div>
 
-        <div class="panel" style="margin: 0; max-height: 520px; overflow: auto">
-          <h3>Resumo operacional</h3>
-          <p><strong>Campanha:</strong> {{ watchingCampaignId }}</p>
-          <p><strong>Última atualização:</strong> {{ formatEventTime(liveDiscovery.updatedAt) }}</p>
-          <p><strong>Profissional em foco:</strong> {{ liveDiscovery.currentProfessional ?? "-" }}</p>
-          <p><strong>Revisados:</strong> {{ liveDiscovery.stats.reviewed }}</p>
-          <p><strong>Eventos capturados:</strong> {{ liveDiscovery.events.length }}</p>
-          <p class="muted">
-            O painel mostra resultados do buscador, payloads enviados para IA, respostas retornadas e catalogação final.
-          </p>
+        <!-- Resumo Técnico -->
+        <div class="panel" style="margin-bottom: 0; background: rgba(15, 23, 42, 0.4);">
+          <h3 class="mb-2"><i class="ri-file-info-line"></i> Metadados Operacionais</h3>
+          <div style="display: grid; gap: 12px; font-size: 14px;">
+            <p><strong>Campanha Monitorada:</strong> #{{ watchingCampaignId }}</p>
+            <p><strong>Nível de Busca Solicitado:</strong> <span class="badge" style="background: rgba(255,255,255,0.05); border: 1px solid var(--border-color)">{{ liveDiscovery.searchLevel ?? "-" }}</span></p>
+            <p><strong>Meta de Leads Finais:</strong> {{ liveDiscovery.targetFinalLeads ?? "-" }} leads</p>
+            <p><strong>Última Sincronização:</strong> {{ formatEventTime(liveDiscovery.updatedAt) }}</p>
+            <p><strong>Leads Revisados na Rodada:</strong> {{ liveDiscovery.stats.reviewed }}</p>
+            <p><strong>Total de Eventos no Monitor:</strong> {{ liveDiscovery.events.length }}</p>
+            <p class="muted" style="font-size: 13px; line-height: 1.5; border-top: 1px solid var(--border-color); padding-top: 10px;">
+              Este monitor acompanha o robô de descoberta. Os dados coletados de fontes públicas passam por um crivo analítico da IA antes de serem convertidos em oportunidades.
+            </p>
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="validation" class="panel">
-      <h2>Validação comercial</h2>
-      <div class="grid cols-4">
-        <div class="metric">
-          <span>Leads</span>
-          <strong>{{ validation.collectedLeads }}</strong>
+    <!-- Validação Comercial (Checklist) -->
+    <div v-if="validation" class="panel fade-in" style="margin-bottom: 24px;">
+      <h2><i class="ri-checkbox-multiple-line"></i> Validação Comercial da Campanha</h2>
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px; align-items: start;">
+        
+        <div>
+          <div class="grid cols-4" style="margin-bottom: 20px;">
+            <div class="metric">
+              <span>Leads Totais</span>
+              <strong>{{ validation.collectedLeads }}</strong>
+            </div>
+            <div class="metric">
+              <span>Qualificados (Hot/Warm)</span>
+              <strong>{{ validation.reviewedHotWarm }}</strong>
+            </div>
+            <div class="metric">
+              <span>Contatos Executados</span>
+              <strong>{{ validation.manualContacts }}</strong>
+            </div>
+            <div class="metric">
+              <span>Vendas (Won)</span>
+              <strong style="color: var(--accent-green)">{{ validation.wonDeals }}</strong>
+            </div>
+          </div>
+
+          <h3 class="mb-1">Metas e Critérios Operacionais</h3>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Meta / Critério</th>
+                  <th>Progresso Realizado</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in validation.checklist" :key="item.label">
+                  <td class="text-highlight">{{ item.label }}</td>
+                  <td>
+                    <div class="flex-row-center">
+                      <strong style="min-width: 50px;">{{ item.current }} / {{ item.target }}</strong>
+                      <div class="score-bar-wrapper" style="width: 100px; height: 8px;">
+                        <div class="score-bar-fill" :style="{ width: Math.min((item.current / item.target) * 100, 100) + '%' }"></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span v-if="item.done" class="badge" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #a7f3d0;">
+                      <i class="ri-checkbox-circle-fill"></i> Ok
+                    </span>
+                    <span v-else class="badge" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #fef08a;">
+                      <i class="ri-time-line"></i> Pendente
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div class="metric">
-          <span>Hot/Warm</span>
-          <strong>{{ validation.reviewedHotWarm }}</strong>
+
+        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 20px;">
+          <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Decisão Recomendada</span>
+          <div class="mt-1 mb-2">
+            <span class="badge hot" style="font-size: 13px; font-weight: 800;">
+              <i class="ri-guide-line"></i> {{ formatDecision(validation.recommendedDecision) }}
+            </span>
+          </div>
+          <h3 class="mt-2">Parecer Técnico da IA</h3>
+          <p style="font-size: 13px; line-height: 1.6; color: var(--text-main);" class="mt-1">{{ validation.interpretation }}</p>
         </div>
-        <div class="metric">
-          <span>Contatos</span>
-          <strong>{{ validation.manualContacts }}</strong>
-        </div>
-        <div class="metric">
-          <span>Vendas</span>
-          <strong>{{ validation.wonDeals }}</strong>
-        </div>
+
       </div>
-      <p><strong>Decisão:</strong> {{ formatDecision(validation.recommendedDecision) }}</p>
-      <p>{{ validation.interpretation }}</p>
-      <table>
-        <tbody>
-          <tr v-for="item in validation.checklist" :key="item.label">
-            <td>{{ item.label }}</td>
-            <td>{{ item.current }} / {{ item.target }}</td>
-            <td>{{ item.done ? "ok" : "pendente" }}</td>
-          </tr>
-        </tbody>
-      </table>
     </div>
 
-    <div v-if="report" class="panel">
-      <h2>Relatório da campanha</h2>
+    <!-- Relatório Analítico da Campanha -->
+    <div v-if="report" class="panel fade-in" style="margin-bottom: 0;">
+      <h2><i class="ri-bar-chart-2-line"></i> Relatório Analítico de Desempenho</h2>
       <div class="grid cols-3">
-        <div>
-          <h3>Nicho</h3>
-          <p v-for="row in report.byNiche" :key="row.key">{{ row.key }} - {{ row.conversionRate }}%</p>
+        <!-- Nicho -->
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-md);">
+          <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px; font-size: 13px; text-transform: uppercase; color: var(--text-muted);"><i class="ri-briefcase-line" style="margin-right: 6px;"></i> Por Nicho</h3>
+          <div v-for="row in report.byNiche" :key="row.key" style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;">
+            <span>{{ row.key }}</span>
+            <strong class="text-highlight">{{ row.conversionRate }}% conv.</strong>
+          </div>
         </div>
-        <div>
-          <h3>Cidade</h3>
-          <p v-for="row in report.byCity" :key="row.key">{{ row.key }} - {{ row.responseRate }}%</p>
+        
+        <!-- Cidade -->
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-md);">
+          <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px; font-size: 13px; text-transform: uppercase; color: var(--text-muted);"><i class="ri-map-pin-line" style="margin-right: 6px;"></i> Por Cidade</h3>
+          <div v-for="row in report.byCity" :key="row.key" style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;">
+            <span>{{ row.key }}</span>
+            <strong class="text-highlight">{{ row.responseRate }}% resp.</strong>
+          </div>
         </div>
-        <div>
-          <h3>Oferta</h3>
-          <p v-for="row in report.byOffer" :key="row.key">{{ formatOffer(row.key) }} - {{ row.won }} vendas</p>
+        
+        <!-- Oferta -->
+        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-md);">
+          <h3 style="border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px; font-size: 13px; text-transform: uppercase; color: var(--text-muted);"><i class="ri-shake-hands-line" style="margin-right: 6px;"></i> Por Oferta</h3>
+          <div v-for="row in report.byOffer" :key="row.key" style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;">
+            <span>{{ formatOffer(row.key) }}</span>
+            <strong style="color: var(--accent-green)">{{ row.won }} vendas</strong>
+          </div>
         </div>
       </div>
     </div>
@@ -224,14 +352,28 @@ import {
   type Campaign,
   type CampaignValidationReport,
   type CommercialReport,
+  type DiscoverySearchLevel,
   type DiscoveryStatus
 } from "../../services/api";
+import GenericGrid, { type ColumnConfig } from "../../components/GenericGrid.vue";
 
 export default defineComponent({
   name: "CampaignsView",
+  components: {
+    GenericGrid
+  },
   data() {
     return {
+      campaignColumns: [
+        { key: "name", label: "Nome", sortable: true },
+        { key: "niche", label: "Nicho", sortable: true },
+        { key: "city", label: "Cidade", sortable: true, sortExpression: (row: any) => `${row.city}/${row.state}` },
+        { key: "status", label: "Status", sortable: true },
+        { key: "leads", label: "Leads", sortable: true, sortExpression: (row: any) => row.metrics?.leadsFound ?? 0 },
+        { key: "actions", label: "Ações", sortable: false, align: "right" as const, headerAlign: "right" as const }
+      ] as ColumnConfig[],
       campaigns: [] as Campaign[],
+      selectedCampaigns: {} as Record<number, boolean>,
       form: {
         name: "",
         niche: "",
@@ -243,6 +385,7 @@ export default defineComponent({
       validation: undefined as CampaignValidationReport | undefined,
       report: undefined as CommercialReport | undefined,
       discoveringCampaignIds: [] as number[],
+      discoveryLevels: {} as Record<number, DiscoverySearchLevel>,
       watchingCampaignId: undefined as number | undefined,
       liveDiscovery: undefined as DiscoveryStatus | undefined,
       discoveryPoller: undefined as number | undefined
@@ -278,6 +421,11 @@ export default defineComponent({
     },
     async load() {
       this.campaigns = await api.campaigns();
+      this.campaigns.forEach((campaign) => {
+        if (!this.discoveryLevels[campaign.id]) {
+          this.discoveryLevels[campaign.id] = "quick";
+        }
+      });
     },
     async create() {
       try {
@@ -293,16 +441,21 @@ export default defineComponent({
       await api.campaignAction(id, action);
       await this.load();
     },
-    async discover(id: number) {
+    selectedDiscoveryLevel(id: number): DiscoverySearchLevel {
+      return this.discoveryLevels[id] ?? "quick";
+    },
+    async discover(id: number, level: DiscoverySearchLevel = "quick") {
       if (this.isDiscovering(id)) return;
+      this.discoveryLevels[id] = level;
       this.discoveringCampaignIds.push(id);
       this.startDiscoveryPolling(id);
       try {
         this.error = "";
-        const result = await api.discoverCampaign(id);
+        const result = await api.discoverCampaign(id, level);
+        const target = result.meta?.targetFinalLeads ?? (level === "deep" ? 60 : level === "medium" ? 30 : level === "nano" ? 5 : 10);
         this.lastResult = result.cancelled
-          ? `Descoberta interrompida: ${result.inserted} leads inseridos antes da parada.`
-          : `Descoberta: ${result.inserted} leads inseridos de ${result.reviewed} revisados.`;
+          ? `Descoberta ${level} interrompida: ${result.inserted}/${target} leads finais inseridos antes da parada.`
+          : `Descoberta ${level}: ${result.inserted}/${target} leads finais inseridos de ${result.reviewed} revisados.`;
         await this.load();
       } catch (error) {
         this.error = error instanceof Error ? error.message : "Falha ao executar descoberta";
@@ -364,6 +517,94 @@ export default defineComponent({
     },
     stringifyJson(value: unknown) {
       return JSON.stringify(value, null, 2);
+    },
+    
+    // Métodos de seleção em lote (Meta Ads Style)
+    getSelectedIds(): number[] {
+      return Object.entries(this.selectedCampaigns)
+        .filter(([_, selected]) => selected)
+        .map(([id]) => Number(id));
+    },
+    clearSelection() {
+      this.selectedCampaigns = {};
+    },
+    toggleSelectAll(event: Event) {
+      const checked = (event.target as HTMLInputElement).checked;
+      this.campaigns.forEach((campaign) => {
+        this.selectedCampaigns[campaign.id] = checked;
+      });
+    },
+    async bulkStart() {
+      const ids = this.getSelectedIds();
+      this.error = "";
+      try {
+        for (const id of ids) {
+          await api.campaignAction(id, "start");
+        }
+        await this.load();
+        this.clearSelection();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : "Erro ao iniciar campanhas";
+      }
+    },
+    async bulkPause() {
+      const ids = this.getSelectedIds();
+      this.error = "";
+      try {
+        for (const id of ids) {
+          await api.campaignAction(id, "pause");
+        }
+        await this.load();
+        this.clearSelection();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : "Erro ao pausar campanhas";
+      }
+    },
+    async bulkEmbeddings() {
+      const ids = this.getSelectedIds();
+      this.error = "";
+      try {
+        let count = 0;
+        for (const id of ids) {
+          const res = await api.rebuildCampaignEmbeddings(id);
+          count += res.created;
+        }
+        this.lastResult = `Embeddings em lote concluído: ${count} registros gerados no total.`;
+        this.clearSelection();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : "Erro ao recalcular embeddings";
+      }
+    },
+    async bulkValidate() {
+      const ids = this.getSelectedIds();
+      if (ids.length === 1) {
+        await this.validateCampaign(ids[0]);
+        this.clearSelection();
+      }
+    },
+    async bulkDownloadCsv() {
+      const ids = this.getSelectedIds();
+      this.error = "";
+      try {
+        for (const id of ids) {
+          await this.downloadCsv(id);
+        }
+        this.clearSelection();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : "Erro ao exportar CSVs";
+      }
+    }
+  },
+  computed: {
+    allSelected(): boolean {
+      if (!this.campaigns.length) return false;
+      return this.campaigns.every((c) => this.selectedCampaigns[c.id]);
+    },
+    hasSelection(): boolean {
+      return this.campaigns.some((c) => this.selectedCampaigns[c.id]);
+    },
+    selectedCount(): number {
+      return this.campaigns.filter((c) => this.selectedCampaigns[c.id]).length;
     }
   }
 });

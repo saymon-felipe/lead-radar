@@ -9,7 +9,7 @@ import { StructuredRunLogger } from "../../shared/utils/structured-run-logger.js
 import { createOrUpdateObjectiveScore } from "../scoring/scoring.service.js";
 
 const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
-const promptVersion = "social-review-2026-06-20";
+const promptVersion = "social-review-2026-06-22-noise-guards";
 
 const socialReviewSchema = z.object({
   socialPresenceScore: z.number().int().min(0).max(100),
@@ -55,6 +55,68 @@ function detectPlatform(url: string): SocialSnapshot["platform"] {
 function socialUrlForLead(lead: Lead): string | undefined {
   return lead.instagramUrl ?? lead.facebookUrl ?? lead.linkedinUrl ?? lead.googleMapsUrl;
 }
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+const BLOCKED_EXTERNAL_LINK_HOSTS = [
+  "about.meta.com",
+  "meta.com",
+  "facebook.com",
+  "instagram.com",
+  "linkedin.com",
+  "youtube.com",
+  "tiktok.com",
+  "linktr.ee",
+  "linktree.com",
+  "beacons.ai",
+  "bio.site",
+  "taplink.cc",
+  "wa.me",
+  "whatsapp.com",
+  "api.whatsapp.com",
+  "doctoralia.com.br",
+  "mundopsicologos.com.br",
+  "psicologiaviva.com.br",
+  "zenklub.com.br",
+  "boaconsulta.com",
+  "agenda.app.br",
+  "melhores.com",
+  "mapadatcs.com.br",
+  "qualotelefone.com",
+  "atosoficiais.com.br",
+  "medicosbrasil.com",
+  "catalogo.med.br",
+  "consultasmedicas.com.br",
+  "getninjas.com.br",
+  "hotmart.com"
+];
+
+function normalizeExternalLink(href: string, baseUrl: string): string | undefined {
+  try {
+    const absolute = new URL(href, baseUrl);
+    const wrapped = absolute.searchParams.get("u") ?? absolute.searchParams.get("url");
+    if (wrapped && /instagram|facebook|l\.instagram/i.test(absolute.hostname)) {
+      return new URL(decodeURIComponent(wrapped)).href;
+    }
+    return absolute.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function isOwnWebsiteCandidate(url: string | undefined): url is string {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  const host = hostOf(url);
+  if (!host) return false;
+  return !BLOCKED_EXTERNAL_LINK_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
 
 async function ensurePage(browser?: Browser): Promise<Page | undefined> {
   if (!browser) return undefined;
@@ -102,7 +164,7 @@ async function callOpenAi(input: Record<string, unknown>): Promise<SocialAiRevie
       {
         role: "system",
         content:
-          "Você é um analista comercial de presença digital local. Use apenas o JSON recebido. Retorne apenas JSON válido."
+          "Analise presença social local com saída curta. Use apenas o JSON recebido e retorne apenas JSON válido."
       },
       { role: "user", content: JSON.stringify(input) }
     ]
@@ -131,9 +193,9 @@ async function fetchPublicProfileSummary(
         500
       );
       const externalLink = $("a")
-        .map((_, element) => $(element).attr("href") ?? "")
+        .map((_, element) => normalizeExternalLink($(element).attr("href") ?? "", url))
         .get()
-        .find((href) => href.startsWith("http") && !href.includes(new URL(url).hostname));
+        .find((href): href is string => isOwnWebsiteCandidate(href));
       options?.logger?.writeHtmlArtifact("social-profile-page", html, {
         url,
         mode: "browser",
@@ -181,9 +243,9 @@ async function fetchPublicProfileSummary(
       500
     );
     const externalLink = $("a")
-      .map((_, element) => $(element).attr("href") ?? "")
+      .map((_, element) => normalizeExternalLink($(element).attr("href") ?? "", url))
       .get()
-      .find((href) => href.startsWith("http") && !href.includes(new URL(url).hostname));
+      .find((href): href is string => isOwnWebsiteCandidate(href));
     options?.logger?.writeHtmlArtifact("social-profile-page", html, {
       url,
       mode: "fetch",
@@ -247,9 +309,10 @@ function updateDigitalPresenceFromSocial(lead: Lead, snapshot: SocialSnapshot, r
 }
 
 function updateLeadFromSocial(lead: Lead, snapshot: SocialSnapshot): Lead {
+  const shouldPromoteExternalWebsite = process.env.SCRAPER_ACCEPT_SOCIAL_EXTERNAL_WEBSITE === "true";
   const updatedLead: Lead = {
     ...lead,
-    websiteUrl: lead.websiteUrl ?? (snapshot.hasWebsiteLink ? snapshot.externalLink : undefined),
+    websiteUrl: lead.websiteUrl ?? (shouldPromoteExternalWebsite && snapshot.hasWebsiteLink && isOwnWebsiteCandidate(snapshot.externalLink) ? snapshot.externalLink : undefined),
     updatedAt: new Date().toISOString(),
     rawDataJson: {
       ...(lead.rawDataJson ?? {}),
@@ -281,7 +344,7 @@ export async function analyzeSocial(lead: Lead, options?: SocialAnalysisOptions)
   });
   const text = `${fetched.bioText ?? ""} ${fetched.externalLink ?? ""} ${lead.whatsapp ?? ""}`;
   const hasWhatsapp = /wa\.me|api\.whatsapp|whatsapp|\+55|\d{10,}/i.test(text);
-  const hasWebsiteLink = Boolean(fetched.externalLink && !fetched.externalLink.toLowerCase().includes("linktree"));
+  const hasWebsiteLink = isOwnWebsiteCandidate(fetched.externalLink);
   const contentSignalsJson = [
     fetched.bioText ? "bio_publica_detectada" : undefined,
     hasWhatsapp ? "whatsapp_detectado" : undefined,
@@ -340,8 +403,9 @@ export async function analyzeSocial(lead: Lead, options?: SocialAnalysisOptions)
     url: profileUrl,
     payload: aiInput
   });
-  const generatedReview = cached ?? (await callOpenAi(aiInput));
-  const reviewSource = cached ? "cache" : generatedReview ? "openai" : "fallback";
+  const shouldUseAi = process.env.SCRAPER_AI_REVIEW_SOCIAL === "true";
+  const generatedReview = shouldUseAi ? cached ?? (await callOpenAi(aiInput)) : undefined;
+  const reviewSource = !shouldUseAi ? "fallback_ai_disabled_by_default" : cached ? "cache" : generatedReview ? "openai" : "fallback";
   const review = socialReviewSchema.parse(generatedReview ?? fallbackSocialReview(lead, snapshot));
   appendTrace(options?.logger, {
     kind: "ai_response",

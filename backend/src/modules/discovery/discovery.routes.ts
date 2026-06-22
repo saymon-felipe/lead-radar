@@ -17,10 +17,13 @@ const reviewPayload = z.object({
 export async function discoveryRoutes(app: FastifyInstance) {
   app.post("/api/campaigns/:id/discover", async (request) => {
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const query = z.object({ limit: z.coerce.number().int().min(1).max(30).default(12) }).parse(request.query);
+    const query = z.object({
+      level: z.enum(["nano", "quick", "medium", "deep"]).default("quick"),
+      limit: z.coerce.number().int().min(1).max(60).optional()
+    }).parse(request.query);
     const campaign = store.campaigns.get(id);
     if (!campaign) throw new HttpError(404, "Campanha não encontrada");
-    return discoverCampaign(campaign, query.limit);
+    return discoverCampaign(campaign, { level: query.level, targetFinalLeads: query.limit });
   });
 
   app.post("/api/campaigns/:id/discover/stop", async (request) => {

@@ -3,19 +3,28 @@
     <aside class="sidebar">
       <div class="sidebar-inner">
         <div class="brand">
-          <span class="brand-mark">LR</span>
+          <span class="brand-mark"><i class="ri-radar-line"></i></span>
           <div>
             <strong>Lead Radar</strong>
-            <small>Operacao comercial</small>
+            <small>Operação comercial</small>
           </div>
         </div>
 
         <div class="sidebar-section">
-          <span class="sidebar-label">Navegacao</span>
+          <span class="sidebar-label">Navegação</span>
           <nav class="nav">
-            <RouterLink to="/dashboard">Dashboard</RouterLink>
-            <RouterLink to="/campaigns">Campanhas</RouterLink>
-            <RouterLink to="/leads">Leads</RouterLink>
+            <RouterLink to="/dashboard">
+              <i class="ri-dashboard-3-line"></i>
+              Dashboard
+            </RouterLink>
+            <RouterLink to="/campaigns">
+              <i class="ri-rocket-2-line"></i>
+              Campanhas
+            </RouterLink>
+            <RouterLink to="/leads">
+              <i class="ri-user-search-line"></i>
+              Leads
+            </RouterLink>
           </nav>
         </div>
 
@@ -36,7 +45,7 @@
 
         <div class="topbar-actions">
           <div class="user-pill">
-            <span class="user-avatar">{{ initials }}</span>
+            <span class="user-avatar"><i class="ri-user-line"></i></span>
             <div>
               <strong>{{ authSession.state.user?.name }}</strong>
               <small>{{ authSession.state.user?.email }}</small>
@@ -60,12 +69,4 @@ import { authSession } from "./services/session";
 const route = useRoute();
 
 const pageTitle = computed(() => String(route.meta.title ?? "Lead Radar"));
-const initials = computed(() =>
-  (authSession.state.user?.name ?? "LR")
-    .split(" ")
-    .map((part) => part[0] ?? "")
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
-);
 </script>

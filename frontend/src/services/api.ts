@@ -232,6 +232,8 @@ export interface SimilarLead {
   lead?: Lead;
 }
 
+export type DiscoverySearchLevel = "nano" | "quick" | "medium" | "deep";
+
 export interface DiscoveryResult {
   collected: number;
   filtered: number;
@@ -248,6 +250,11 @@ export interface DiscoveryResult {
     leadId?: number;
   }>;
   leads: Lead[];
+  meta?: {
+    searchLevel?: DiscoverySearchLevel;
+    targetFinalLeads?: number;
+    [key: string]: unknown;
+  };
 }
 
 export interface DiscoveryStopResult {
@@ -271,6 +278,8 @@ export interface DiscoveryStatus {
   running: boolean;
   startedAt: string;
   updatedAt: string;
+  searchLevel?: DiscoverySearchLevel;
+  targetFinalLeads?: number;
   currentStep?: string;
   currentProfessional?: string;
   stats: {
@@ -493,7 +502,8 @@ export const api = {
   rebuildLeadEmbeddings: (id: number) =>
     request<{ created: number; embeddings: LeadEmbedding[] }>(`/api/leads/${id}/embeddings`, { method: "POST", body: "{}" }),
   similarLeads: (id: number) => request<SimilarLead[]>(`/api/leads/${id}/similar`),
-  discoverCampaign: (id: number) => request<DiscoveryResult>(`/api/campaigns/${id}/discover`, { method: "POST", body: "{}" }),
+  discoverCampaign: (id: number, level: DiscoverySearchLevel = "quick") =>
+    request<DiscoveryResult>(`/api/campaigns/${id}/discover?level=${encodeURIComponent(level)}`, { method: "POST", body: "{}" }),
   stopCampaignDiscovery: (id: number) =>
     request<DiscoveryStopResult>(`/api/campaigns/${id}/discover/stop`, { method: "POST", body: "{}" }),
   discoveryStatus: (id: number) => request<DiscoveryStatus | null>(`/api/campaigns/${id}/discovery-status`),

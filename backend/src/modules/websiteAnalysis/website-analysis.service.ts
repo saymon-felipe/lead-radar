@@ -7,11 +7,12 @@ import { z } from "zod";
 import { store } from "../../shared/store/memory-store.js";
 import type { DigitalPresence, Lead, WebsiteAiReview, WebsiteSnapshot } from "../../shared/types.js";
 import { inputHash } from "../../shared/utils/hash.js";
+import { extractContacts as extractContactDetails } from "../../shared/utils/contact-extraction.js";
 import { StructuredRunLogger } from "../../shared/utils/structured-run-logger.js";
 import { createOrUpdateObjectiveScore } from "../scoring/scoring.service.js";
 
 const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
-const promptVersion = "website-review-2026-06-21";
+const promptVersion = "website-review-2026-06-22-html-first-visual-guard";
 
 const websiteReviewSchema = z.object({
   websiteQualityScore: z.number().int().min(0).max(100),
@@ -58,6 +59,105 @@ function detectPlatform(html: string): string | undefined {
 function hasAny(text: string, patterns: string[]): boolean {
   const lower = text.toLowerCase();
   return patterns.some((pattern) => lower.includes(pattern));
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+const NON_OWN_WEBSITE_HOSTS = [
+  "about.meta.com",
+  "meta.com",
+  "facebook.com",
+  "instagram.com",
+  "linkedin.com",
+  "youtube.com",
+  "tiktok.com",
+  "doctoralia.com.br",
+  "mundopsicologos.com.br",
+  "psicologiaviva.com.br",
+  "zenklub.com.br",
+  "boaconsulta.com",
+  "agenda.app.br",
+  "melhores.com",
+  "mapadatcs.com.br",
+  "qualotelefone.com",
+  "atosoficiais.com.br",
+  "medicosbrasil.com",
+  "catalogo.med.br",
+  "consultasmedicas.com.br",
+  "getninjas.com.br",
+  "google.com",
+  "google.com.br",
+  "maps.app.goo.gl",
+  "listamais.com.br",
+  "empresafone.com.br",
+  "guiatelefone.com",
+  "guiatelefone.com.br",
+  "guia-telefone.com",
+  "acheioprofissional.com.br",
+  "brfirmas.org",
+  "brfirmas.com.br",
+  "cnpj.biz",
+  "consultarcnpj.com.br",
+  "empresascnpj.com",
+  "telepesquisa.com",
+  "telepesquisa.com.br",
+  "yelp.com",
+  "todosnegocios.com",
+  "br.todosnegocios.com",
+  "guiafacil.com",
+  "guiafacil.com.br",
+  "cylex.com.br",
+  "guialocal.com.br",
+  "hotfrog.com.br",
+  "orcid.org",
+  "lattes.cnpq.br",
+  "cnpq.br",
+  "escavador.com",
+  "jusbrasil.com.br",
+  "globo.com",
+  "g1.globo.com",
+  "ge.globo.com",
+  "uol.com.br",
+  "terra.com.br",
+  "metropoles.com",
+  "folha.uol.com.br",
+  "estadao.com.br"
+];
+
+function isNonOwnWebsiteUrl(url: string): boolean {
+  const host = hostOf(url);
+  return NON_OWN_WEBSITE_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function isIntermediateOrBlockedPage(url: string, title: string, bodyText: string): boolean {
+  const haystack = `${hostOf(url)} ${url} ${title} ${bodyText}`.toLowerCase();
+  return isNonOwnWebsiteUrl(url)
+    || /cloudflare|executando verifica[cç][aã]o de seguran[cç]a|checking your browser|just a moment|captcha|verificando/.test(haystack)
+    || /cadastro m[eé]dico|consultas m[eé]dicas|qual o telefone|localizar um telefone|atos oficiais|telefone e endere[cç]o|empresas similares|cadastre sua empresa|como chegar|ver no mapa|guia de empresas|lista telef[oô]nica/.test(haystack)
+    || /yelp|todosnegocios|todos negocios|orcid|lattes|g1\.globo|ge\.globo|not[ií]cia|reportagem|jornal|business listing|\/biz\/|\/empresa\/|\/local\//.test(haystack)
+    || /qual [ée] endere[cç]o da web|n[aã]o h[aá] site listado|voc[eê] pode contatar|p[aá]ginas que apenas mencionam|perfil em diret[oó]rio/.test(haystack);
+}
+
+function clearInvalidWebsiteFromLead(lead: Lead, reason: string): Lead {
+  const updatedLead: Lead = {
+    ...lead,
+    websiteUrl: undefined,
+    updatedAt: new Date().toISOString(),
+    rawDataJson: {
+      ...(lead.rawDataJson ?? {}),
+      rejectedWebsiteCandidateUrl: lead.websiteUrl,
+      websiteStatus: "aggregator_only",
+      websiteInvalidReason: reason
+    }
+  };
+  store.leads.set(updatedLead.id, updatedLead);
+  return updatedLead;
 }
 
 async function launchScreenshotBrowser(): Promise<Browser | undefined> {
@@ -137,7 +237,7 @@ async function captureWebsiteScreenshot(
     });
     await page.close().catch(() => undefined);
 
-    const shouldSendToAi = process.env.SCRAPER_SEND_SCREENSHOT_TO_AI !== "false";
+    const shouldSendToAi = process.env.SCRAPER_SEND_SCREENSHOT_TO_AI === "true";
     return {
       path: filePath,
       base64: shouldSendToAi ? (await readFile(filePath)).toString("base64") : undefined
@@ -165,7 +265,7 @@ async function captureScreenshotFromPage(
       quality: Number(process.env.SCRAPER_SCREENSHOT_QUALITY ?? 58),
       fullPage: false
     });
-    const shouldSendToAi = process.env.SCRAPER_SEND_SCREENSHOT_TO_AI !== "false";
+    const shouldSendToAi = process.env.SCRAPER_SEND_SCREENSHOT_TO_AI === "true";
     return {
       path: filePath,
       base64: shouldSendToAi ? (await readFile(filePath)).toString("base64") : undefined
@@ -173,29 +273,6 @@ async function captureScreenshotFromPage(
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Falha ao capturar screenshot" };
   }
-}
-
-function extractContactDetails(text: string): {
-  emails: string[];
-  phones: string[];
-  whatsappNumbers: string[];
-} {
-  const emails = Array.from(new Set(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []));
-  const phones = Array.from(
-    new Set(
-      (text.match(/(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?(?:9?\d{4})-?\d{4}/g) ?? [])
-        .map((item) => item.replace(/[^\d+]/g, ""))
-        .filter((item) => item.length >= 10)
-    )
-  );
-  const whatsappNumbers = Array.from(
-    new Set(
-      (text.match(/(?:wa\.me\/|api\.whatsapp\.com\/send\?phone=)(\d{10,15})/gi) ?? [])
-        .map((item) => item.replace(/[^\d]/g, ""))
-        .filter(Boolean)
-    )
-  );
-  return { emails, phones, whatsappNumbers };
 }
 
 async function collectVisualMetrics(page: Page): Promise<Record<string, unknown>> {
@@ -293,7 +370,7 @@ function fallbackWebsiteReview(snapshot: WebsiteSnapshot): WebsiteAiReview {
 }
 
 async function callOpenAi(input: Record<string, unknown>, screenshotBase64?: string): Promise<WebsiteAiReview | undefined> {
-  if (!process.env.OPENAI_API_KEY) return undefined;
+  if (!process.env.OPENAI_API_KEY || process.env.SCRAPER_AI_ANALYZE_WEBSITE === "false") return undefined;
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const userContent = screenshotBase64
     ? [
@@ -315,7 +392,7 @@ async function callOpenAi(input: Record<string, unknown>, screenshotBase64?: str
       {
         role: "system",
         content:
-          "Você é um analista comercial especializado em avaliar sites de pequenos negócios locais. Use o JSON recebido e, quando houver imagem, avalie clareza visual, hierarquia, aparência profissional e confiança comercial. Retorne apenas JSON válido."
+          "Analise presença digital local apenas de site institucional/pessoal próprio do lead. Priorize HTML/métricas; imagem é só conferência visual quando enviada. Se a página parecer agregador, diretório, Yelp, ORCID/Lattes, notícia, perfil de terceiros ou listagem de telefone/endereço, trate como sem valor comercial de site próprio. Retorne apenas JSON válido, curto e objetivo."
       },
       { role: "user", content: userContent as any }
     ] as any
@@ -418,7 +495,6 @@ export async function analyzeWebsite(
         leadName: options.leadName
       });
       renderedMetrics = await collectVisualMetrics(renderedPage).catch(() => ({}));
-      screenshot = await captureScreenshotFromPage(renderedPage, lead.id);
     } finally {
       if (ownsPage) {
         await renderedPage.close().catch(() => undefined);
@@ -453,7 +529,7 @@ export async function analyzeWebsite(
       clearTimeout(timeout);
       signal?.removeEventListener("abort", stopFetch);
     }
-    screenshot = await captureWebsiteScreenshot(lead.websiteUrl, lead.id, signal);
+    // Screenshot is captured later only after validating that this is not an aggregator/intermediate page.
   }
 
   throwIfAborted(signal);
@@ -478,13 +554,20 @@ export async function analyzeWebsite(
     .get();
   throwIfAborted(signal);
   const combined = `${bodyText} ${links.map((link) => `${link.text} ${link.href}`).join(" ")}`;
-  const contacts = extractContactDetails(`${html} ${combined}`);
+  const contacts = extractContactDetails(combined);
   const hasWhatsapp = /wa\.me|api\.whatsapp|whatsapp/i.test(combined);
   const hasContactForm = $("form").length > 0 || hasAny(combined, ["formulario", "formulário", "envie sua mensagem"]);
   const hasCta = hasAny(combined, ["agende", "fale conosco", "entre em contato", "chamar no whatsapp", "solicite", "marque"]);
   const hasLocation = hasAny(combined, ["endereco", "endereço", "londrina", "cambe", "maringa", "presencial"]);
   const hasServices = hasAny(combined, ["servicos", "serviços", "atendimento", "terapia", "consulta", "especialidades"]);
   const hasTestimonials = hasAny(combined, ["depoimento", "avaliacao", "avaliação", "testemunho"]);
+  const invalidVisualTarget = isIntermediateOrBlockedPage(lead.websiteUrl, `${title} ${h1}`, bodyText);
+
+  if (!invalidVisualTarget && process.env.SCRAPER_CAPTURE_SCREENSHOT !== "false") {
+    screenshot = renderedPage && !renderedPage.isClosed()
+      ? await captureScreenshotFromPage(renderedPage, lead.id)
+      : await captureWebsiteScreenshot(lead.websiteUrl, lead.id, signal);
+  }
 
   const baseSnapshot = {
     url: lead.websiteUrl,
@@ -514,6 +597,8 @@ export async function analyzeWebsite(
       screenshotError: screenshot.error,
       screenshotSentToAi: Boolean(screenshot.base64),
       contacts,
+      invalidVisualTarget,
+      analysisMode: invalidVisualTarget ? "html_only_skipped_visual" : "html_primary_visual_optional",
       ...renderedMetrics
     }
   };
@@ -544,16 +629,17 @@ export async function analyzeWebsite(
       title: snapshot.title,
       metaDescription: snapshot.metaDescription,
       h1: snapshot.h1,
-      headings: snapshot.headingsJson,
+      headings: snapshot.headingsJson.slice(0, 8),
       detectedPlatform: snapshot.platform,
       hasWhatsappCta: snapshot.hasWhatsapp,
       hasContactForm: snapshot.hasContactForm,
       hasClearServices: snapshot.hasServices,
       hasLocation: snapshot.hasLocation,
       hasTestimonials: snapshot.hasTestimonials,
-      textSample: snapshot.textSample,
+      textSample: compactText(snapshot.textSample ?? "", 450),
       screenshotCaptured: Boolean(snapshot.rawMetricsJson.screenshotPath),
-      visualMetrics: renderedMetrics
+      visualMetrics: invalidVisualTarget ? undefined : renderedMetrics,
+      invalidVisualTarget
     }
   };
   const aiHash = inputHash(aiInput);
@@ -573,8 +659,8 @@ export async function analyzeWebsite(
     }
   });
   throwIfAborted(signal);
-  const generatedReview = cached ?? (await callOpenAi(aiInput, screenshot.base64));
-  const reviewSource = cached ? "cache" : generatedReview ? "openai" : "fallback";
+  const generatedReview = invalidVisualTarget ? undefined : cached ?? (await callOpenAi(aiInput, screenshot.base64));
+  const reviewSource = invalidVisualTarget ? "skipped_invalid_or_aggregator_page" : cached ? "cache" : generatedReview ? "openai" : "fallback";
   const review = websiteReviewSchema.parse(generatedReview ?? fallbackWebsiteReview(snapshot));
   throwIfAborted(signal);
   appendTrace(options.logger, {
@@ -614,7 +700,9 @@ export async function analyzeWebsite(
     createdAt: now
   });
 
-  const updatedLead = updateLeadContactsFromWebsite(lead, contacts);
+  const updatedLead = invalidVisualTarget
+    ? clearInvalidWebsiteFromLead(lead, "website_analysis_invalid_or_aggregator_page")
+    : updateLeadContactsFromWebsite(lead, contacts);
   updateDigitalPresenceFromWebsite(updatedLead, snapshot, review);
   createOrUpdateObjectiveScore(updatedLead);
   options.logger?.writeJsonArtifact(`website-snapshot-lead-${lead.id}`, snapshot, {

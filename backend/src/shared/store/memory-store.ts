@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Prisma } from "@prisma/client";
@@ -156,6 +157,38 @@ function fromPrismaJson<T>(value: Prisma.JsonValue | null | undefined): T | unde
 
 function fromPrismaJsonRequired<T>(value: Prisma.JsonValue): T {
   return value as unknown as T;
+}
+
+const AI_CACHE_ENTITY_ID_MAX_LENGTH = 64;
+
+function normalizeAiCacheEntityId(entityId: string): string {
+  if (entityId.length <= AI_CACHE_ENTITY_ID_MAX_LENGTH) return entityId;
+  const hash = createHash("sha256").update(entityId).digest("hex");
+  return `sha256:${hash.slice(0, AI_CACHE_ENTITY_ID_MAX_LENGTH - "sha256:".length)}`;
+}
+
+function aiCacheInputJsonForDb(cache: AiCacheEntry): Prisma.InputJsonValue {
+  const normalizedEntityId = normalizeAiCacheEntityId(cache.entityId);
+  if (normalizedEntityId === cache.entityId) return toPrismaJson(cache.inputJson);
+
+  return toPrismaJson({
+    ...cache.inputJson,
+    __aiCacheEntityId: {
+      original: cache.entityId,
+      normalized: normalizedEntityId
+    }
+  });
+}
+
+function aiCacheUniqueWhere(cache: AiCacheEntry) {
+  return {
+    entityType: cache.entityType,
+    entityId: normalizeAiCacheEntityId(cache.entityId),
+    analysisType: cache.analysisType,
+    model: cache.model,
+    promptVersion: cache.promptVersion,
+    inputHash: cache.inputHash
+  };
 }
 
 export class MemoryStore {
@@ -456,24 +489,17 @@ export class MemoryStore {
       for (const [, cache] of data.aiCache ?? []) {
         await tx.aiAnalysisCache.upsert({
           where: {
-            entityType_entityId_analysisType_model_promptVersion_inputHash: {
-              entityType: cache.entityType,
-              entityId: cache.entityId,
-              analysisType: cache.analysisType,
-              model: cache.model,
-              promptVersion: cache.promptVersion,
-              inputHash: cache.inputHash
-            }
+            entityType_entityId_analysisType_model_promptVersion_inputHash: aiCacheUniqueWhere(cache)
           },
           create: {
             id: cache.id,
             entityType: cache.entityType,
-            entityId: cache.entityId,
+            entityId: normalizeAiCacheEntityId(cache.entityId),
             analysisType: cache.analysisType,
             model: cache.model,
             promptVersion: cache.promptVersion,
             inputHash: cache.inputHash,
-            inputJson: toPrismaJson(cache.inputJson),
+            inputJson: aiCacheInputJsonForDb(cache),
             outputJson: toPrismaJson(cache.outputJson),
             tokensInput: cache.tokensInput,
             tokensOutput: cache.tokensOutput,
@@ -481,7 +507,7 @@ export class MemoryStore {
             createdAt: new Date(cache.createdAt)
           },
           update: {
-            inputJson: toPrismaJson(cache.inputJson),
+            inputJson: aiCacheInputJsonForDb(cache),
             outputJson: toPrismaJson(cache.outputJson),
             tokensInput: cache.tokensInput,
             tokensOutput: cache.tokensOutput,
@@ -913,18 +939,21 @@ export class MemoryStore {
       ]));
 
       this.restoreMap(this.aiCache, aiCache.map((item) => {
-        const key = [item.entityType, item.entityId, item.analysisType, item.model, item.promptVersion, item.inputHash].join(":");
+        const inputJson = fromPrismaJsonRequired<Record<string, unknown>>(item.inputJson);
+        const entityIdMetadata = inputJson.__aiCacheEntityId as Record<string, unknown> | undefined;
+        const entityId = typeof entityIdMetadata?.original === "string" ? entityIdMetadata.original : item.entityId;
+        const key = [item.entityType, entityId, item.analysisType, item.model, item.promptVersion, item.inputHash].join(":");
         return [
           key,
           {
             id: item.id,
             entityType: item.entityType,
-            entityId: item.entityId,
+            entityId,
             analysisType: item.analysisType,
             model: item.model,
             promptVersion: item.promptVersion,
             inputHash: item.inputHash,
-            inputJson: fromPrismaJsonRequired<Record<string, unknown>>(item.inputJson),
+            inputJson,
             outputJson: fromPrismaJsonRequired<Record<string, unknown>>(item.outputJson),
             tokensInput: item.tokensInput ?? undefined,
             tokensOutput: item.tokensOutput ?? undefined,
@@ -1327,24 +1356,17 @@ export class MemoryStore {
         const cache = value as AiCacheEntry;
         await prisma.aiAnalysisCache.upsert({
           where: {
-            entityType_entityId_analysisType_model_promptVersion_inputHash: {
-              entityType: cache.entityType,
-              entityId: cache.entityId,
-              analysisType: cache.analysisType,
-              model: cache.model,
-              promptVersion: cache.promptVersion,
-              inputHash: cache.inputHash
-            }
+            entityType_entityId_analysisType_model_promptVersion_inputHash: aiCacheUniqueWhere(cache)
           },
           create: {
             id: cache.id,
             entityType: cache.entityType,
-            entityId: cache.entityId,
+            entityId: normalizeAiCacheEntityId(cache.entityId),
             analysisType: cache.analysisType,
             model: cache.model,
             promptVersion: cache.promptVersion,
             inputHash: cache.inputHash,
-            inputJson: toPrismaJson(cache.inputJson),
+            inputJson: aiCacheInputJsonForDb(cache),
             outputJson: toPrismaJson(cache.outputJson),
             tokensInput: cache.tokensInput,
             tokensOutput: cache.tokensOutput,
@@ -1352,7 +1374,7 @@ export class MemoryStore {
             createdAt: new Date(cache.createdAt)
           },
           update: {
-            inputJson: toPrismaJson(cache.inputJson),
+            inputJson: aiCacheInputJsonForDb(cache),
             outputJson: toPrismaJson(cache.outputJson),
             tokensInput: cache.tokensInput,
             tokensOutput: cache.tokensOutput,
@@ -1679,14 +1701,7 @@ export class MemoryStore {
         if (!cache) return;
         await prisma.aiAnalysisCache.delete({
           where: {
-            entityType_entityId_analysisType_model_promptVersion_inputHash: {
-              entityType: cache.entityType,
-              entityId: cache.entityId,
-              analysisType: cache.analysisType,
-              model: cache.model,
-              promptVersion: cache.promptVersion,
-              inputHash: cache.inputHash
-            }
+            entityType_entityId_analysisType_model_promptVersion_inputHash: aiCacheUniqueWhere(cache)
           }
         }).catch(() => undefined);
         break;

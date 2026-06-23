@@ -1,55 +1,64 @@
 import { computed, reactive } from "vue";
-import { clearApiToken, type AuthSessionResponse, type AuthenticatedUser } from "./api";
+import { api, clearApiToken, setApiToken, type AuthSessionResponse, type AuthenticatedUser } from "./api";
 
-const LOCAL_USER: AuthenticatedUser = {
-  id: 1,
-  name: "Operacao Lead Radar",
-  email: "local@lead-radar.app",
-  role: "admin",
-  createdAt: new Date(0).toISOString(),
-  updatedAt: new Date(0).toISOString()
-};
+const TOKEN_KEY = "lead-radar.token";
 
 const state = reactive({
   ready: false,
-  token: "",
-  user: LOCAL_USER as AuthenticatedUser | null
+  token: localStorage.getItem(TOKEN_KEY) ?? "",
+  user: null as AuthenticatedUser | null
 });
 
+function applySession(session: AuthSessionResponse) {
+  state.token = session.token;
+  state.user = session.user;
+  localStorage.setItem(TOKEN_KEY, session.token);
+  setApiToken(session.token);
+}
+
 async function bootstrap() {
-  state.token = "";
-  state.user = LOCAL_USER;
-  clearApiToken();
-  state.ready = true;
+  if (state.ready) return;
+  if (!state.token) {
+    clearApiToken();
+    state.ready = true;
+    return;
+  }
+
+  setApiToken(state.token);
+  try {
+    state.user = await api.me();
+  } catch {
+    logout();
+  } finally {
+    state.ready = true;
+  }
 }
 
-async function register(_: { name: string; email: string; password: string }) {
-  await bootstrap();
-  return {
-    token: "",
-    user: LOCAL_USER
-  } satisfies AuthSessionResponse;
+async function register(payload: { name: string; email: string; password: string; organizationName?: string }) {
+  const session = await api.register(payload);
+  applySession(session);
+  return session;
 }
 
-async function login(_: { email: string; password: string }) {
-  await bootstrap();
-  return {
-    token: "",
-    user: LOCAL_USER
-  } satisfies AuthSessionResponse;
+async function login(payload: { email: string; password: string }) {
+  const session = await api.login(payload);
+  applySession(session);
+  return session;
 }
 
 function logout() {
   state.token = "";
-  state.user = LOCAL_USER;
+  state.user = null;
+  localStorage.removeItem(TOKEN_KEY);
   clearApiToken();
 }
 
 export const authSession = {
   state,
-  isAuthenticated: computed(() => Boolean(state.user)),
+  isAuthenticated: computed(() => Boolean(state.user && state.token)),
   bootstrap,
   register,
   login,
+  applySession,
   logout
 };

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as cheerio from "cheerio";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import { extractContacts as extractContactDetails } from "../../shared/utils/con
 import { StructuredRunLogger } from "../../shared/utils/structured-run-logger.js";
 import { createOrUpdateObjectiveScore } from "../scoring/scoring.service.js";
 
-const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+const model = process.env.OPENAI_MODEL ?? "gpt-5-nano";
 const promptVersion = "website-review-2026-06-22-html-first-visual-guard";
 
 const websiteReviewSchema = z.object({

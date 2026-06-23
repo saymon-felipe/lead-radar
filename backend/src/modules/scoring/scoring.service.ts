@@ -1,5 +1,6 @@
 import type { Lead, LeadScore, RecommendedOffer, ScoreBreakdownItem, Temperature } from "../../shared/types.js";
-import { store } from "../../shared/store/memory-store.js";
+import { prisma } from "../../shared/prisma.js";
+import { serializeScore } from "../../shared/http/serializers.js";
 
 function hasValue(value: unknown): boolean {
   return typeof value === "string" ? value.trim().length > 0 : Boolean(value);
@@ -17,24 +18,24 @@ export function classifyTemperature(score: number): Temperature {
   return "discard";
 }
 
-export function recommendedOfferForLead(lead: Lead, objectiveScore: number): RecommendedOffer {
-  const latestWebsite = Array.from(store.websiteSnapshots.values())
-    .filter((snapshot) => snapshot.leadId === lead.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const latestSocial = Array.from(store.socialSnapshots.values())
-    .filter((snapshot) => snapshot.leadId === lead.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-
-  if (latestWebsite?.aiReview?.commercialOpportunity && latestWebsite.aiReview.commercialOpportunity !== "none") {
-    return latestWebsite.aiReview.commercialOpportunity;
+function recommendedOfferForLead(
+  lead: Lead,
+  objectiveScore: number,
+  latestWebsiteReview?: Record<string, unknown>,
+  latestSocialReview?: Record<string, unknown>
+): RecommendedOffer {
+  const websiteOpportunity = latestWebsiteReview?.commercialOpportunity;
+  if (typeof websiteOpportunity === "string" && websiteOpportunity !== "none") {
+    return websiteOpportunity as RecommendedOffer;
   }
 
-  if (latestSocial?.aiReview?.opportunity === "digital_presence_organization") {
+  const socialOpportunity = latestSocialReview?.opportunity;
+  if (socialOpportunity === "digital_presence_organization") {
     return "digital_presence_organization";
   }
 
-  if (latestSocial?.aiReview?.opportunity && latestSocial.aiReview.opportunity !== "none") {
-    return latestSocial.aiReview.opportunity;
+  if (typeof socialOpportunity === "string" && socialOpportunity !== "none") {
+    return socialOpportunity as RecommendedOffer;
   }
 
   if (!hasValue(lead.websiteUrl)) return "landing_page";
@@ -57,7 +58,16 @@ function normalizedCity(value: string): string {
     .replace(/\p{Diacritic}/gu, "");
 }
 
-export function calculateObjectiveScore(lead: Lead): Pick<
+export function calculateObjectiveScore(
+  lead: Lead,
+  components: {
+    digitalPresenceScore?: number;
+    aiCommercialScore?: number;
+    embeddingSimilarityScore?: number;
+    latestWebsiteReview?: Record<string, unknown>;
+    latestSocialReview?: Record<string, unknown>;
+  } = {}
+): Pick<
   LeadScore,
   | "objectiveScore"
   | "aiCommercialScore"
@@ -112,25 +122,12 @@ export function calculateObjectiveScore(lead: Lead): Pick<
   const opportunityScore = scoreItems(opportunityItems);
   const objectiveScore = clampScore(contactabilityScore * 0.35 + identityScore * 0.35 + opportunityScore * 0.3);
 
-  const digitalPresence = Array.from(store.digitalPresence.values()).find((presence) => presence.leadId === lead.id);
-  const digitalScores = [digitalPresence?.websiteQualityScore, digitalPresence?.socialPresenceScore].filter(
-    (score): score is number => typeof score === "number"
-  );
-  const digitalPresenceScore = digitalScores.length
-    ? clampScore(digitalScores.reduce((sum, score) => sum + score, 0) / digitalScores.length)
-    : undefined;
-  const latestAiReview = Array.from(store.aiReviews.values())
-    .filter((review) => review.leadId === lead.id && review.analysisType === "lead_final_review")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const aiCommercialScore = typeof latestAiReview?.outputJson.aiCommercialScore === "number"
-    ? clampScore(latestAiReview.outputJson.aiCommercialScore)
-    : undefined;
-  const profileEmbedding = Array.from(store.embeddings.values())
-    .filter((embedding) => embedding.leadId === lead.id && embedding.embeddingType === "lead_profile")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const embeddingSimilarityScore = typeof profileEmbedding?.metadataJson?.idealSimilarityScore === "number"
-    ? clampScore(profileEmbedding.metadataJson.idealSimilarityScore)
-    : undefined;
+  const digitalPresenceScore =
+    typeof components.digitalPresenceScore === "number" ? clampScore(components.digitalPresenceScore) : undefined;
+  const aiCommercialScore =
+    typeof components.aiCommercialScore === "number" ? clampScore(components.aiCommercialScore) : undefined;
+  const embeddingSimilarityScore =
+    typeof components.embeddingSimilarityScore === "number" ? clampScore(components.embeddingSimilarityScore) : undefined;
 
   const weightedComponents = [
     { value: objectiveScore, weight: 0.65 },
@@ -150,7 +147,12 @@ export function calculateObjectiveScore(lead: Lead): Pick<
     embeddingSimilarityScore,
     finalScore,
     temperature: classifyTemperature(finalScore),
-    recommendedOffer: recommendedOfferForLead(lead, objectiveScore),
+    recommendedOffer: recommendedOfferForLead(
+      lead,
+      objectiveScore,
+      components.latestWebsiteReview,
+      components.latestSocialReview
+    ),
     scoreBreakdownJson: [
       { key: "contactability_score", label: `Contactability: ${contactabilityScore}/100`, points: contactabilityScore, applied: true },
       { key: "identity_score", label: `Identidade: ${identityScore}/100`, points: identityScore, applied: true },
@@ -162,25 +164,83 @@ export function calculateObjectiveScore(lead: Lead): Pick<
   };
 }
 
-export function createOrUpdateObjectiveScore(lead: Lead): LeadScore {
-  const current = Array.from(store.scores.values()).find((score) => score.leadId === lead.id);
-  const now = new Date().toISOString();
-  const calculated = calculateObjectiveScore(lead);
-
-  const score: LeadScore = {
-    id: current?.id ?? store.nextId("score"),
-    leadId: lead.id,
-    ...calculated,
-    createdAt: current?.createdAt ?? now,
-    updatedAt: now
-  };
-
-  store.scores.set(score.id, score);
-  return score;
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  return value as Record<string, unknown>;
 }
 
-export function latestScoreForLead(leadId: number): LeadScore | undefined {
-  return Array.from(store.scores.values())
-    .filter((score) => score.leadId === leadId)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+async function loadScoreComponents(organizationId: number, leadId: number) {
+  const [digitalPresence, latestAiReview, profileEmbedding, latestWebsite, latestSocial] = await Promise.all([
+    prisma.leadDigitalPresence.findFirst({ where: { organizationId, leadId } }),
+    prisma.leadAiReview.findFirst({
+      where: { organizationId, leadId, analysisType: "lead_final_review" },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.leadEmbedding.findFirst({
+      where: { organizationId, leadId, embeddingType: "lead_profile" },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.leadWebsiteSnapshot.findFirst({
+      where: { organizationId, leadId },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.leadSocialSnapshot.findFirst({
+      where: { organizationId, leadId },
+      orderBy: { createdAt: "desc" }
+    })
+  ]);
+
+  const digitalScores = [digitalPresence?.websiteQualityScore, digitalPresence?.socialPresenceScore].filter(
+    (score): score is number => typeof score === "number"
+  );
+  const aiOutput = asRecord(latestAiReview?.outputJson);
+  const embeddingMetadata = asRecord(profileEmbedding?.metadataJson);
+
+  return {
+    digitalPresenceScore: digitalScores.length
+      ? clampScore(digitalScores.reduce((sum, score) => sum + score, 0) / digitalScores.length)
+      : undefined,
+    aiCommercialScore:
+      typeof aiOutput?.aiCommercialScore === "number" ? clampScore(aiOutput.aiCommercialScore) : undefined,
+    embeddingSimilarityScore:
+      typeof embeddingMetadata?.idealSimilarityScore === "number"
+        ? clampScore(embeddingMetadata.idealSimilarityScore)
+        : undefined,
+    latestWebsiteReview: asRecord(latestWebsite?.aiReviewJson),
+    latestSocialReview: asRecord(latestSocial?.aiReviewJson)
+  };
+}
+
+export async function createOrUpdateObjectiveScore(lead: Lead): Promise<LeadScore> {
+  const calculated = calculateObjectiveScore(
+    lead,
+    await loadScoreComponents(lead.organizationId, lead.id)
+  );
+  const current = await prisma.leadScore.findFirst({
+    where: { organizationId: lead.organizationId, leadId: lead.id },
+    orderBy: { updatedAt: "desc" }
+  });
+
+  const score = current
+    ? await prisma.leadScore.update({
+        where: { id: current.id },
+        data: calculated as any
+      })
+    : await prisma.leadScore.create({
+        data: {
+          organizationId: lead.organizationId,
+          leadId: lead.id,
+          ...(calculated as any)
+        }
+      });
+
+  return serializeScore(score);
+}
+
+export async function latestScoreForLead(organizationId: number, leadId: number): Promise<LeadScore | undefined> {
+  const score = await prisma.leadScore.findFirst({
+    where: { organizationId, leadId },
+    orderBy: { updatedAt: "desc" }
+  });
+  return score ? serializeScore(score) : undefined;
 }

@@ -1,4 +1,5 @@
-import { store } from "../../shared/store/memory-store.js";
+import { prisma } from "../../shared/prisma.js";
+import { serializeInteraction, serializeLead, serializeScore } from "../../shared/http/serializers.js";
 import type {
   CampaignValidationReport,
   CommercialInteraction,
@@ -6,10 +7,8 @@ import type {
   Lead,
   LeadScore,
   RecommendedOffer,
-  ScoreWeightVersion,
-  Temperature
+  ScoreWeightVersion
 } from "../../shared/types.js";
-import { latestScoreForLead } from "../scoring/scoring.service.js";
 
 const RESPONSE_STATUSES = ["replied", "interested", "meeting_scheduled", "proposal_sent", "won"];
 const INTEREST_STATUSES = ["interested", "meeting_scheduled", "proposal_sent", "won"];
@@ -21,12 +20,6 @@ function percentage(part: number, total: number): number {
   return total > 0 ? Math.round((part / total) * 100) : 0;
 }
 
-function latestInteractionForLead(leadId: number): CommercialInteraction | undefined {
-  return Array.from(store.interactions.values())
-    .filter((interaction) => interaction.leadId === leadId)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-}
-
 function scoreBand(score?: LeadScore): string {
   const value = score?.finalScore ?? 0;
   if (value >= 80) return "80-100";
@@ -36,17 +29,25 @@ function scoreBand(score?: LeadScore): string {
   return "0-19";
 }
 
-function leadRows(campaignId?: number) {
-  return Array.from(store.leads.values())
-    .filter((lead) => campaignId === undefined || lead.campaignId === campaignId)
-    .map((lead) => ({
-      lead,
-      score: latestScoreForLead(lead.id),
-      interaction: latestInteractionForLead(lead.id)
-    }));
+type ReportRow = { lead: Lead; score?: LeadScore; interaction?: CommercialInteraction };
+
+async function leadRows(organizationId: number, campaignId?: number): Promise<ReportRow[]> {
+  const leads = await prisma.lead.findMany({
+    where: { organizationId, ...(campaignId ? { campaignId } : {}) },
+    include: {
+      scores: { orderBy: { updatedAt: "desc" }, take: 1 },
+      interactions: { orderBy: { updatedAt: "desc" }, take: 1 }
+    }
+  });
+
+  return leads.map((lead) => ({
+    lead: serializeLead(lead),
+    score: lead.scores[0] ? serializeScore(lead.scores[0]) : undefined,
+    interaction: lead.interactions[0] ? serializeInteraction(lead.interactions[0]) : undefined
+  }));
 }
 
-function buildReport(key: string, rows: Array<{ lead: Lead; score?: LeadScore; interaction?: CommercialInteraction }>): DimensionReport {
+function buildReport(key: string, rows: ReportRow[]): DimensionReport {
   const contacted = rows.filter((row) => row.interaction && CONTACTED_STATUSES.includes(row.interaction.status)).length;
   const replied = rows.filter((row) => row.interaction && RESPONSE_STATUSES.includes(row.interaction.status)).length;
   const interested = rows.filter((row) => row.interaction && INTEREST_STATUSES.includes(row.interaction.status)).length;
@@ -73,14 +74,14 @@ function buildReport(key: string, rows: Array<{ lead: Lead; score?: LeadScore; i
   };
 }
 
-function groupBy(keySelector: (row: { lead: Lead; score?: LeadScore; interaction?: CommercialInteraction }) => string, campaignId?: number) {
-  const groups = new Map<string, Array<{ lead: Lead; score?: LeadScore; interaction?: CommercialInteraction }>>();
-  for (const row of leadRows(campaignId)) {
+function groupBy(rows: ReportRow[], keySelector: (row: ReportRow) => string) {
+  const groups = new Map<string, ReportRow[]>();
+  for (const row of rows) {
     const key = keySelector(row) || "sem_dado";
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
   return Array.from(groups.entries())
-    .map(([key, rows]) => buildReport(key, rows))
+    .map(([key, groupedRows]) => buildReport(key, groupedRows))
     .sort((a, b) => b.conversionRate - a.conversionRate || b.responseRate - a.responseRate || b.leads - a.leads);
 }
 
@@ -97,37 +98,44 @@ function offerLabel(value: RecommendedOffer | string): string {
   return labels[value] ?? value;
 }
 
-export function commercialReport(campaignId?: number) {
-  const rows = leadRows(campaignId);
+function suggestNextCampaigns(byNiche: DimensionReport[], byCity: DimensionReport[], byOffer: DimensionReport[]): string[] {
+  const suggestions: string[] = [];
+  if (byNiche[0]) suggestions.push(`Priorizar nicho ${byNiche[0].key} se houver volume suficiente.`);
+  if (byCity[0]) suggestions.push(`Expandir ou repetir campanha em ${byCity[0].key}.`);
+  if (byOffer[0]) suggestions.push(`Testar oferta ${offerLabel(byOffer[0].key)} como ângulo principal.`);
+  if (!suggestions.length) suggestions.push("Coletar mais contatos manuais antes de ajustar nicho, oferta ou score.");
+  return suggestions;
+}
+
+export async function commercialReport(organizationId: number, campaignId?: number) {
+  const rows = await leadRows(organizationId, campaignId);
   const all = buildReport("total", rows);
-  const aiReviews = Array.from(store.aiReviews.values()).filter((review) => {
-    if (campaignId === undefined) return true;
-    const lead = review.leadId ? store.leads.get(review.leadId) : undefined;
-    return lead?.campaignId === campaignId;
+  const aiReviews = await prisma.leadAiReview.findMany({
+    where: { organizationId, ...(campaignId ? { lead: { campaignId, organizationId } } : {}) }
   });
   const tokensUsed = aiReviews.reduce((sum, review) => sum + (review.tokensInput ?? 0) + (review.tokensOutput ?? 0), 0);
-  const aiCost = aiReviews.reduce((sum, review) => sum + (review.costEstimate ?? 0), 0);
+  const aiCost = aiReviews.reduce((sum, review) => sum + Number(review.costEstimate ?? 0), 0);
   const qualifiedLeads = rows.filter((row) => row.score && ["hot", "warm"].includes(row.score.temperature)).length;
-  const discoveryCandidates = Array.from(store.discoveryCandidates.values()).filter(
-    (candidate) => campaignId === undefined || candidate.campaignId === campaignId
-  );
+  const discardedCandidates = await prisma.discoveryCandidate.count({
+    where: { organizationId, status: "discarded", ...(campaignId ? { campaignId } : {}) }
+  });
   const lostNotes = rows
     .filter((row) => row.interaction?.status === "lost" && row.interaction.notes)
     .map((row) => row.interaction?.notes ?? "")
     .slice(0, 10);
 
-  const byNiche = groupBy((row) => row.lead.niche, campaignId);
-  const byCity = groupBy((row) => row.lead.city, campaignId);
-  const byScoreBand = groupBy((row) => scoreBand(row.score), campaignId);
-  const byOffer = groupBy((row) => row.score?.recommendedOffer ?? "no_offer", campaignId);
-  const byChannel = groupBy((row) => row.interaction?.contactChannel ?? "sem_canal", campaignId);
-  const byTemperature = groupBy((row) => row.score?.temperature ?? "sem_score", campaignId);
+  const byNiche = groupBy(rows, (row) => row.lead.niche);
+  const byCity = groupBy(rows, (row) => row.lead.city);
+  const byScoreBand = groupBy(rows, (row) => scoreBand(row.score));
+  const byOffer = groupBy(rows, (row) => row.score?.recommendedOffer ?? "no_offer");
+  const byChannel = groupBy(rows, (row) => row.interaction?.contactChannel ?? "sem_canal");
+  const byTemperature = groupBy(rows, (row) => row.score?.temperature ?? "sem_score");
 
   return {
     summary: {
       ...all,
       validLeads: rows.length,
-      discardedCandidates: discoveryCandidates.filter((candidate) => candidate.status === "discarded").length,
+      discardedCandidates,
       hotLeads: rows.filter((row) => row.score?.temperature === "hot").length,
       warmLeads: rows.filter((row) => row.score?.temperature === "warm").length,
       mediumLeads: rows.filter((row) => row.score?.temperature === "medium").length,
@@ -157,17 +165,8 @@ export function commercialReport(campaignId?: number) {
   };
 }
 
-function suggestNextCampaigns(byNiche: DimensionReport[], byCity: DimensionReport[], byOffer: DimensionReport[]): string[] {
-  const suggestions: string[] = [];
-  if (byNiche[0]) suggestions.push(`Priorizar nicho ${byNiche[0].key} se houver volume suficiente.`);
-  if (byCity[0]) suggestions.push(`Expandir ou repetir campanha em ${byCity[0].key}.`);
-  if (byOffer[0]) suggestions.push(`Testar oferta ${offerLabel(byOffer[0].key)} como ângulo principal.`);
-  if (!suggestions.length) suggestions.push("Coletar mais contatos manuais antes de ajustar nicho, oferta ou score.");
-  return suggestions;
-}
-
-export function validationReport(campaignId: number): CampaignValidationReport {
-  const rows = leadRows(campaignId);
+export async function validationReport(organizationId: number, campaignId: number): Promise<CampaignValidationReport> {
+  const rows = await leadRows(organizationId, campaignId);
   const scores = rows.map((row) => row.score).filter(Boolean);
   const contacted = rows.filter((row) => row.interaction && CONTACTED_STATUSES.includes(row.interaction.status)).length;
   const replies = rows.filter((row) => row.interaction && RESPONSE_STATUSES.includes(row.interaction.status)).length;
@@ -181,10 +180,8 @@ export function validationReport(campaignId: number): CampaignValidationReport {
 
   if (wonDeals >= 2 && contacted >= 50) {
     interpretation = "Canal forte: duas ou mais vendas em contatos qualificados.";
-    recommendedDecision = "continue_niche";
   } else if (wonDeals >= 1 && contacted >= 50) {
     interpretation = "Canal potencialmente viável: houve venda com contatos qualificados.";
-    recommendedDecision = "continue_niche";
   } else if (collectedLeads >= 300 && contacted >= 50 && wonDeals === 0) {
     interpretation = "Sem vendas com volume relevante: revisar nicho, oferta, mensagem ou scoring.";
     recommendedDecision = replies >= 8 ? "adjust_offer" : "adjust_message";
@@ -221,8 +218,8 @@ export function validationReport(campaignId: number): CampaignValidationReport {
   };
 }
 
-export function scoreCalibrationSuggestion(): ScoreWeightVersion {
-  const report = commercialReport();
+export async function scoreCalibrationSuggestion(organizationId: number): Promise<ScoreWeightVersion> {
+  const report = await commercialReport(organizationId);
   const temperature = report.byTemperature;
   const hot = temperature.find((item) => item.key === "hot");
   const warm = temperature.find((item) => item.key === "warm");
@@ -242,25 +239,44 @@ export function scoreCalibrationSuggestion(): ScoreWeightVersion {
     rationale.push("Leads warm converteram melhor que hot; aumentar peso de sinais digitais e semânticos.");
   }
 
-  if ((report.summary.leadsWithoutWebsite > report.summary.leadsWithWebsite) && report.summary.won > 0) {
-    rationale.push("Ausencia de site aparece como sinal relevante para oferta de landing page.");
+  if (report.summary.leadsWithoutWebsite > report.summary.leadsWithWebsite && report.summary.won > 0) {
+    rationale.push("Ausência de site aparece como sinal relevante para oferta de landing page.");
   }
 
   if (!rationale.length) {
     rationale.push("Volume ainda insuficiente para alterar pesos com confiança; manter pesos atuais.");
   }
 
-  const version: ScoreWeightVersion = {
-    id: store.nextId("scoreWeightVersion"),
-    version: `suggested-${new Date().toISOString()}`,
+  const created = await prisma.scoreWeightVersion.create({
+    data: {
+      organizationId,
+      version: `suggested-${new Date().toISOString()}`,
+      weights: weights as any,
+      rationale: rationale as any
+    }
+  });
+
+  return {
+    id: created.id,
+    organizationId: created.organizationId,
+    version: created.version,
     weights,
     rationale,
-    createdAt: new Date().toISOString()
+    createdAt: created.createdAt.toISOString()
   };
-  store.scoreWeightVersions.set(version.id, version);
-  return version;
 }
 
-export function latestScoreWeightVersions() {
-  return Array.from(store.scoreWeightVersions.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+export async function latestScoreWeightVersions(organizationId: number) {
+  const versions = await prisma.scoreWeightVersion.findMany({
+    where: { organizationId },
+    orderBy: { createdAt: "desc" }
+  });
+  return versions.map((version) => ({
+    id: version.id,
+    organizationId: version.organizationId,
+    version: version.version,
+    weights: version.weights,
+    rationale: version.rationale,
+    createdAt: version.createdAt.toISOString()
+  }));
 }

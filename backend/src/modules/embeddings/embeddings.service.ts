@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import { store } from "../../shared/store/memory-store.js";

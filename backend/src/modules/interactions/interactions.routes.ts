@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { prisma } from "../../shared/prisma.js";
+import { requireAuthContext, requireRole } from "../../shared/auth/guard.js";
 import { HttpError } from "../../shared/errors/http-error.js";
-import { store } from "../../shared/store/memory-store.js";
-import type { CommercialInteraction } from "../../shared/types.js";
-import { registerCommercialMemory } from "../embeddings/embeddings.service.js";
+import { serializeInteraction } from "../../shared/http/serializers.js";
 
 const interactionPayload = z.object({
   status: z.enum([
@@ -25,49 +25,62 @@ const interactionPayload = z.object({
   nextActionAt: z.string().datetime().optional()
 });
 
+async function assertLead(organizationId: number, leadId: number) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, organizationId } });
+  if (!lead) throw new HttpError(404, "Lead não encontrado");
+}
+
 export async function interactionRoutes(app: FastifyInstance) {
   app.get("/api/leads/:id/interactions", async (request) => {
+    const { organizationId } = requireAuthContext(request);
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.leads.has(id)) throw new HttpError(404, "Lead não encontrado");
-    return Array.from(store.interactions.values()).filter((interaction) => interaction.leadId === id);
+    await assertLead(organizationId, id);
+    const interactions = await prisma.commercialInteraction.findMany({
+      where: { organizationId, leadId: id },
+      orderBy: { updatedAt: "desc" }
+    });
+    return interactions.map(serializeInteraction);
   });
 
   app.post("/api/leads/:id/interactions", async (request, reply) => {
+    const context = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.leads.has(id)) throw new HttpError(404, "Lead não encontrado");
+    await assertLead(context.organizationId, id);
     const payload = interactionPayload.parse(request.body);
-    const now = new Date().toISOString();
-    const interaction: CommercialInteraction = {
-      id: store.nextId("interaction"),
-      leadId: id,
-      ...payload,
-      createdAt: now,
-      updatedAt: now
-    };
-    store.interactions.set(interaction.id, interaction);
-    const lead = store.leads.get(id);
-    if (lead && (interaction.status === "won" || interaction.status === "lost")) {
-      await registerCommercialMemory(lead, interaction.status);
-    }
+    const interaction = await prisma.commercialInteraction.create({
+      data: {
+        organizationId: context.organizationId,
+        leadId: id,
+        createdBy: context.userId,
+        status: payload.status,
+        contactChannel: payload.contactChannel,
+        contactedAt: payload.contactedAt ? new Date(payload.contactedAt) : undefined,
+        responseAt: payload.responseAt ? new Date(payload.responseAt) : undefined,
+        notes: payload.notes,
+        nextActionAt: payload.nextActionAt ? new Date(payload.nextActionAt) : undefined
+      }
+    });
     reply.code(201);
-    return interaction;
+    return serializeInteraction(interaction);
   });
 
   app.put("/api/interactions/:id", async (request) => {
+    const { organizationId } = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const current = store.interactions.get(id);
+    const current = await prisma.commercialInteraction.findFirst({ where: { id, organizationId } });
     if (!current) throw new HttpError(404, "Interação não encontrada");
     const payload = interactionPayload.partial().parse(request.body);
-    const updated: CommercialInteraction = {
-      ...current,
-      ...payload,
-      updatedAt: new Date().toISOString()
-    };
-    store.interactions.set(id, updated);
-    const lead = store.leads.get(updated.leadId);
-    if (lead && (updated.status === "won" || updated.status === "lost")) {
-      await registerCommercialMemory(lead, updated.status);
-    }
-    return updated;
+    const updated = await prisma.commercialInteraction.update({
+      where: { id },
+      data: {
+        status: payload.status,
+        contactChannel: payload.contactChannel,
+        contactedAt: payload.contactedAt ? new Date(payload.contactedAt) : undefined,
+        responseAt: payload.responseAt ? new Date(payload.responseAt) : undefined,
+        notes: payload.notes,
+        nextActionAt: payload.nextActionAt ? new Date(payload.nextActionAt) : undefined
+      }
+    });
+    return serializeInteraction(updated);
   });
 }

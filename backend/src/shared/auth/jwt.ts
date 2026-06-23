@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { AuthSessionPayload, AppUser } from "../types.js";
+import type { AuthSessionPayload, AppUser, UserRole } from "../types.js";
 
 const HEADER = {
   alg: "HS256",
@@ -35,13 +35,19 @@ function signatureFor(input: string): string {
     .replace(/=+$/g, "");
 }
 
-export function createSessionToken(user: AppUser, expiresInSeconds = DEFAULT_EXPIRES_IN_SECONDS): string {
+export function createSessionToken(
+  user: Pick<AppUser, "id" | "email" | "name">,
+  organization: { id: number; name: string; role: UserRole } | null,
+  expiresInSeconds = DEFAULT_EXPIRES_IN_SECONDS
+): string {
   const now = Math.floor(Date.now() / 1000);
   const payload: AuthSessionPayload = {
     sub: String(user.id),
     email: user.email,
     name: user.name,
-    role: user.role,
+    role: organization?.role ?? "viewer",
+    organizationId: (organization?.id ?? null) as number,
+    organizationName: (organization?.name ?? null) as string,
     iat: now,
     exp: now + expiresInSeconds
   };

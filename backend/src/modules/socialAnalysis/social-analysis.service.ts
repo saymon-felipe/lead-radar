@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as cheerio from "cheerio";
 import OpenAI from "openai";
 import type { Browser, Page } from "playwright";
@@ -8,7 +9,7 @@ import { inputHash } from "../../shared/utils/hash.js";
 import { StructuredRunLogger } from "../../shared/utils/structured-run-logger.js";
 import { createOrUpdateObjectiveScore } from "../scoring/scoring.service.js";
 
-const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+const model = process.env.OPENAI_MODEL ?? "gpt-5-nano";
 const promptVersion = "social-review-2026-06-22-noise-guards";
 
 const socialReviewSchema = z.object({

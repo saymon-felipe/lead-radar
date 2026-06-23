@@ -1,7 +1,20 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { prisma } from "../../shared/prisma.js";
+import { requireAuthContext, requireRole } from "../../shared/auth/guard.js";
 import { HttpError } from "../../shared/errors/http-error.js";
-import { store } from "../../shared/store/memory-store.js";
+import {
+  serializeAiReview,
+  serializeDigitalPresence,
+  serializeEmbedding,
+  serializeInteraction,
+  serializeLead,
+  serializeMessage,
+  serializeScore,
+  serializeSocialSnapshot,
+  serializeWebsiteSnapshot
+} from "../../shared/http/serializers.js";
+import { inputHash } from "../../shared/utils/hash.js";
 import type { Lead } from "../../shared/types.js";
 import { createOrUpdateObjectiveScore, latestScoreForLead } from "../scoring/scoring.service.js";
 
@@ -56,7 +69,9 @@ const leadQuery = z.object({
   hasInstagram: z.enum(["true", "false"]).optional(),
   status: z.string().optional(),
   minScore: z.coerce.number().int().optional(),
-  maxScore: z.coerce.number().int().optional()
+  maxScore: z.coerce.number().int().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(200).default(100)
 });
 
 function normalizeOptionalString(value: string | undefined): string | undefined {
@@ -81,9 +96,9 @@ function parseCsv(csv: string): Array<Record<string, string>> {
   });
 }
 
-function leadFromPayload(payload: z.infer<typeof leadPayload>, id: number, now: string, createdAt = now): Lead {
+function leadDataFromPayload(payload: z.infer<typeof leadPayload>, organizationId: number) {
   return {
-    id,
+    organizationId,
     campaignId: payload.campaignId,
     businessName: payload.businessName,
     personName: normalizeOptionalString(payload.personName),
@@ -104,151 +119,229 @@ function leadFromPayload(payload: z.infer<typeof leadPayload>, id: number, now: 
     linkedinUrl: normalizeOptionalString(payload.linkedinUrl),
     googleMapsUrl: normalizeOptionalString(payload.googleMapsUrl),
     source: payload.source,
-    rawDataJson: payload.rawDataJson,
-    websiteSignals: payload.websiteSignals,
-    createdAt,
-    updatedAt: now
+    rawDataJson: payload.rawDataJson ? ({ ...payload.rawDataJson, websiteSignals: payload.websiteSignals } as any) : undefined
+  };
+}
+
+async function assertCampaignBelongsToOrganization(organizationId: number, campaignId?: number) {
+  if (!campaignId) return;
+  const campaign = await prisma.searchCampaign.findFirst({ where: { id: campaignId, organizationId } });
+  if (!campaign) throw new HttpError(400, "A campanha informada não existe");
+}
+
+async function findLead(organizationId: number, id: number) {
+  const lead = await prisma.lead.findFirst({ where: { id, organizationId } });
+  if (!lead) throw new HttpError(404, "Lead não encontrado");
+  return lead;
+}
+
+function leadWhereFromQuery(organizationId: number, query: z.infer<typeof leadQuery>) {
+  const where: any = { organizationId };
+  if (query.campaignId) where.campaignId = query.campaignId;
+  if (query.niche) where.niche = { contains: query.niche };
+  if (query.city) where.city = { contains: query.city };
+  if (query.hasWebsite) where.websiteUrl = query.hasWebsite === "true" ? { not: null } : null;
+  if (query.hasWhatsapp) where.whatsapp = query.hasWhatsapp === "true" ? { not: null } : null;
+  if (query.hasInstagram) where.instagramUrl = query.hasInstagram === "true" ? { not: null } : null;
+  if (query.temperature || query.recommendedOffer || query.minScore !== undefined || query.maxScore !== undefined) {
+    where.scores = {
+      some: {
+        organizationId,
+        ...(query.temperature ? { temperature: query.temperature } : {}),
+        ...(query.recommendedOffer ? { recommendedOffer: query.recommendedOffer } : {}),
+        ...(query.minScore !== undefined || query.maxScore !== undefined
+          ? { finalScore: { gte: query.minScore, lte: query.maxScore } }
+          : {})
+      }
+    };
+  }
+  if (query.status) {
+    where.interactions = { some: { organizationId, status: query.status } };
+  }
+  return where;
+}
+
+async function leadWithComputedFields(record: any) {
+  const lead = serializeLead(record);
+  const [score, latestInteraction] = await Promise.all([
+    latestScoreForLead(lead.organizationId, lead.id),
+    prisma.commercialInteraction.findFirst({
+      where: { organizationId: lead.organizationId, leadId: lead.id },
+      orderBy: { updatedAt: "desc" }
+    })
+  ]);
+  return {
+    ...lead,
+    score,
+    latestInteraction: latestInteraction ? serializeInteraction(latestInteraction) : undefined
   };
 }
 
 export async function leadRoutes(app: FastifyInstance) {
   app.get("/api/leads", async (request) => {
+    const { organizationId } = requireAuthContext(request);
     const query = leadQuery.parse(request.query);
-    return Array.from(store.leads.values())
-      .map((lead) => ({
-        ...lead,
-        score: latestScoreForLead(lead.id),
-        latestInteraction: Array.from(store.interactions.values())
-          .filter((interaction) => interaction.leadId === lead.id)
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-      }))
-      .filter((lead) => {
-        const score = lead.score;
-        const latestStatus = lead.latestInteraction?.status;
-        if (query.campaignId && lead.campaignId !== query.campaignId) return false;
-        if (query.niche && !lead.niche.toLowerCase().includes(query.niche.toLowerCase())) return false;
-        if (query.city && !lead.city.toLowerCase().includes(query.city.toLowerCase())) return false;
-        if (query.temperature && score?.temperature !== query.temperature) return false;
-        if (query.recommendedOffer && score?.recommendedOffer !== query.recommendedOffer) return false;
-        if (query.hasWebsite && Boolean(lead.websiteUrl) !== (query.hasWebsite === "true")) return false;
-        if (query.hasWhatsapp && Boolean(lead.whatsapp) !== (query.hasWhatsapp === "true")) return false;
-        if (query.hasInstagram && Boolean(lead.instagramUrl) !== (query.hasInstagram === "true")) return false;
-        if (query.status && latestStatus !== query.status) return false;
-        if (query.minScore !== undefined && (score?.finalScore ?? 0) < query.minScore) return false;
-        if (query.maxScore !== undefined && (score?.finalScore ?? 0) > query.maxScore) return false;
-        return true;
-      });
+    const leads = await prisma.lead.findMany({
+      where: leadWhereFromQuery(organizationId, query),
+      orderBy: { createdAt: "desc" },
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize
+    });
+    return Promise.all(leads.map(leadWithComputedFields));
   });
 
   app.post("/api/leads", async (request, reply) => {
+    const { organizationId } = requireRole(request, "operator");
     const payload = leadPayload.parse(request.body);
-    if (payload.campaignId && !store.campaigns.has(payload.campaignId)) {
-      throw new HttpError(400, "A campanha informada não existe");
-    }
+    await assertCampaignBelongsToOrganization(organizationId, payload.campaignId);
 
-    const now = new Date().toISOString();
-    const lead = leadFromPayload(payload, store.nextId("lead"), now);
-    store.leads.set(lead.id, lead);
-    const score = createOrUpdateObjectiveScore(lead);
+    const created = await prisma.lead.create({ data: leadDataFromPayload(payload, organizationId) });
+    const lead = serializeLead(created);
+    const score = await createOrUpdateObjectiveScore(lead);
     reply.code(201);
     return { ...lead, score };
   });
 
   app.post("/api/leads/import", async (request, reply) => {
+    const context = requireRole(request, "operator");
     const payload = csvImportPayload.parse(request.body);
-    if (payload.campaignId && !store.campaigns.has(payload.campaignId)) {
-      throw new HttpError(400, "A campanha informada não existe");
+    await assertCampaignBelongsToOrganization(context.organizationId, payload.campaignId);
+
+    const hash = inputHash(payload);
+    const idempotencyKey = request.headers["idempotency-key"]?.toString() ?? hash;
+    const existingRun = await prisma.jobRun.findUnique({
+      where: {
+        organizationId_operation_idempotencyKey: {
+          organizationId: context.organizationId,
+          operation: "lead_csv_import",
+          idempotencyKey
+        }
+      }
+    });
+    if (existingRun?.status === "completed" && existingRun.outputJson) {
+      return existingRun.outputJson;
     }
 
-    const rows = parseCsv(payload.csv);
-    const imported = rows.map((row) => {
-      const now = new Date().toISOString();
-      const lead = leadFromPayload(
-        leadPayload.parse({
-          campaignId: payload.campaignId,
-          businessName: row.businessName || row.nome || row.name,
-          personName: row.personName || row.profissional,
-          niche: row.niche || row.nicho,
-          city: row.city || row.cidade,
-          state: row.state || row.estado || "PR",
-          whatsapp: row.whatsapp,
-          phone: row.phone || row.telefone,
-          email: row.email,
-          websiteUrl: row.websiteUrl || row.site,
-          instagramUrl: row.instagramUrl || row.instagram,
-          googleMapsUrl: row.googleMapsUrl || row.googleMaps,
-          professionalRegistry: row.professionalRegistry || row.registro,
-          documentStatus: row.documentStatus || row.statusDocumento,
-          source: "csv"
-        }),
-        store.nextId("lead"),
-        now
-      );
-      store.leads.set(lead.id, lead);
-      return { ...lead, score: createOrUpdateObjectiveScore(lead) };
+    const run = existingRun ?? await prisma.jobRun.create({
+      data: {
+        organizationId: context.organizationId,
+        requestedBy: context.userId,
+        operation: "lead_csv_import",
+        idempotencyKey,
+        inputHash: hash,
+        status: "running",
+        inputJson: payload as any,
+        startedAt: new Date()
+      }
     });
 
+    const rows = parseCsv(payload.csv);
+    const imported = [];
+    for (const row of rows) {
+      const parsed = leadPayload.parse({
+        campaignId: payload.campaignId,
+        businessName: row.businessName || row.nome || row.name,
+        personName: row.personName || row.profissional,
+        niche: row.niche || row.nicho,
+        city: row.city || row.cidade,
+        state: row.state || row.estado || "PR",
+        whatsapp: row.whatsapp,
+        phone: row.phone || row.telefone,
+        email: row.email,
+        websiteUrl: row.websiteUrl || row.site,
+        instagramUrl: row.instagramUrl || row.instagram,
+        googleMapsUrl: row.googleMapsUrl || row.googleMaps,
+        professionalRegistry: row.professionalRegistry || row.registro,
+        documentStatus: row.documentStatus || row.statusDocumento,
+        source: "csv"
+      });
+      const created = await prisma.lead.create({ data: leadDataFromPayload(parsed, context.organizationId) });
+      const lead = serializeLead(created);
+      imported.push({ ...lead, score: await createOrUpdateObjectiveScore(lead) });
+    }
+
+    const output = { imported: imported.length, leads: imported };
+    await prisma.jobRun.update({
+      where: { id: run.id },
+      data: { status: "completed", outputJson: output as any, finishedAt: new Date() }
+    });
     reply.code(201);
-    return { imported: imported.length, leads: imported };
+    return output;
   });
 
   app.get("/api/leads/:id", async (request) => {
+    const { organizationId } = requireAuthContext(request);
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const lead = store.leads.get(id);
-    if (!lead) throw new HttpError(404, "Lead não encontrado");
+    const lead = serializeLead(await findLead(organizationId, id));
+    const [score, digitalPresence, websiteSnapshots, socialSnapshots, embeddings, aiReviews, interactions, messages] =
+      await Promise.all([
+        latestScoreForLead(organizationId, id),
+        prisma.leadDigitalPresence.findFirst({ where: { organizationId, leadId: id } }),
+        prisma.leadWebsiteSnapshot.findMany({ where: { organizationId, leadId: id }, orderBy: { createdAt: "desc" } }),
+        prisma.leadSocialSnapshot.findMany({ where: { organizationId, leadId: id }, orderBy: { createdAt: "desc" } }),
+        prisma.leadEmbedding.findMany({ where: { organizationId, leadId: id }, orderBy: { createdAt: "desc" } }),
+        prisma.leadAiReview.findMany({ where: { organizationId, leadId: id }, orderBy: { createdAt: "desc" } }),
+        prisma.commercialInteraction.findMany({ where: { organizationId, leadId: id }, orderBy: { updatedAt: "desc" } }),
+        prisma.generatedMessage.findMany({ where: { organizationId, leadId: id }, orderBy: { createdAt: "desc" } })
+      ]);
+
     return {
       ...lead,
-      score: latestScoreForLead(id),
-      digitalPresence: Array.from(store.digitalPresence.values()).find((presence) => presence.leadId === id),
-      websiteSnapshots: Array.from(store.websiteSnapshots.values()).filter((snapshot) => snapshot.leadId === id),
-      socialSnapshots: Array.from(store.socialSnapshots.values()).filter((snapshot) => snapshot.leadId === id),
-      embeddings: Array.from(store.embeddings.values()).filter((embedding) => embedding.leadId === id),
-      aiReviews: Array.from(store.aiReviews.values()).filter((review) => review.leadId === id),
-      interactions: Array.from(store.interactions.values()).filter((interaction) => interaction.leadId === id),
-      messages: Array.from(store.messages.values()).filter((message) => message.leadId === id)
+      score,
+      digitalPresence: digitalPresence ? serializeDigitalPresence(digitalPresence) : undefined,
+      websiteSnapshots: websiteSnapshots.map(serializeWebsiteSnapshot),
+      socialSnapshots: socialSnapshots.map(serializeSocialSnapshot),
+      embeddings: embeddings.map(serializeEmbedding),
+      aiReviews: aiReviews.map(serializeAiReview),
+      interactions: interactions.map(serializeInteraction),
+      messages: messages.map(serializeMessage)
     };
   });
 
   app.put("/api/leads/:id", async (request) => {
+    const { organizationId } = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const current = store.leads.get(id);
-    if (!current) throw new HttpError(404, "Lead não encontrado");
+    await findLead(organizationId, id);
     const payload = leadPayload.partial().parse(request.body);
-    const now = new Date().toISOString();
-    const updated: Lead = {
-      ...current,
-      ...payload,
-      updatedAt: now
-    };
-    store.leads.set(id, updated);
-    return { ...updated, score: createOrUpdateObjectiveScore(updated) };
+    await assertCampaignBelongsToOrganization(organizationId, payload.campaignId);
+    const updated = await prisma.lead.update({
+      where: { id },
+      data: leadDataFromPayload({ ...payload, country: payload.country ?? "BR", source: payload.source ?? "manual" } as any, organizationId)
+    });
+    const lead = serializeLead(updated);
+    return { ...lead, score: await createOrUpdateObjectiveScore(lead) };
   });
 
   app.delete("/api/leads/:id", async (request, reply) => {
+    const { organizationId } = requireRole(request, "manager");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.leads.delete(id)) throw new HttpError(404, "Lead não encontrado");
+    await findLead(organizationId, id);
+    await prisma.lead.delete({ where: { id } });
     reply.code(204);
   });
 
   app.get("/api/campaigns/:id/leads", async (request) => {
+    const { organizationId } = requireAuthContext(request);
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.campaigns.has(id)) throw new HttpError(404, "Campanha não encontrada");
-    return Array.from(store.leads.values())
-      .filter((lead) => lead.campaignId === id)
-      .map((lead) => ({ ...lead, score: latestScoreForLead(lead.id) }));
+    await assertCampaignBelongsToOrganization(organizationId, id);
+    const leads = await prisma.lead.findMany({
+      where: { organizationId, campaignId: id },
+      orderBy: { createdAt: "desc" }
+    });
+    return Promise.all(leads.map(leadWithComputedFields));
   });
 
   app.post("/api/leads/:id/score", async (request) => {
+    const { organizationId } = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const lead = store.leads.get(id);
-    if (!lead) throw new HttpError(404, "Lead não encontrado");
+    const lead = serializeLead(await findLead(organizationId, id));
     return createOrUpdateObjectiveScore(lead);
   });
 
   app.get("/api/leads/:id/score", async (request) => {
+    const { organizationId } = requireAuthContext(request);
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const lead = store.leads.get(id);
-    if (!lead) throw new HttpError(404, "Lead não encontrado");
-    return latestScoreForLead(id) ?? createOrUpdateObjectiveScore(lead);
+    const lead = serializeLead(await findLead(organizationId, id));
+    return (await latestScoreForLead(organizationId, id)) ?? createOrUpdateObjectiveScore(lead);
   });
 }

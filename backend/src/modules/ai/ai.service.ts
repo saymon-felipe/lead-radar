@@ -1,12 +1,13 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import { store } from "../../shared/store/memory-store.js";
-import type { AiReview, GeneratedMessage, Lead } from "../../shared/types.js";
+import { prisma } from "../../shared/prisma.js";
+import { serializeInteraction, serializeMessage } from "../../shared/http/serializers.js";
+import type { GeneratedMessage, Lead } from "../../shared/types.js";
 import { inputHash } from "../../shared/utils/hash.js";
 import { createOrUpdateObjectiveScore, latestScoreForLead } from "../scoring/scoring.service.js";
 
 const promptVersion = "mvp-2026-06-20";
-const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+const model = process.env.OPENAI_MODEL ?? "gpt-5-nano";
 
 export const finalReviewSchema = z.object({
   aiCommercialScore: z.number().int().min(0).max(100),
@@ -26,13 +27,13 @@ export const messageSchema = z.object({
   cta: z.string()
 });
 
-function cacheKey(entityType: string, entityId: string, analysisType: string, hash: string): string {
-  return [entityType, entityId, analysisType, model, promptVersion, hash].join(":");
-}
-
-function leadInput(lead: Lead): Record<string, unknown> {
-  const score = latestScoreForLead(lead.id) ?? createOrUpdateObjectiveScore(lead);
-  const interactions = Array.from(store.interactions.values()).filter((interaction) => interaction.leadId === lead.id);
+async function leadInput(lead: Lead): Promise<Record<string, unknown>> {
+  const score = (await latestScoreForLead(lead.organizationId, lead.id)) ?? (await createOrUpdateObjectiveScore(lead));
+  const interactions = await prisma.commercialInteraction.findMany({
+    where: { organizationId: lead.organizationId, leadId: lead.id },
+    orderBy: { updatedAt: "desc" },
+    take: 20
+  });
   return {
     lead: {
       businessName: lead.businessName,
@@ -54,16 +55,19 @@ function leadInput(lead: Lead): Record<string, unknown> {
       recommendedOffer: score.recommendedOffer
     },
     detectedIssues: score.scoreBreakdownJson.filter((item) => item.applied).map((item) => item.label),
-    interactions: interactions.map((interaction) => ({
-      status: interaction.status,
-      contactChannel: interaction.contactChannel,
-      notes: interaction.notes
-    }))
+    interactions: interactions.map((interaction) => {
+      const serialized = serializeInteraction(interaction);
+      return {
+        status: serialized.status,
+        contactChannel: serialized.contactChannel,
+        notes: serialized.notes
+      };
+    })
   };
 }
 
-function fallbackReview(lead: Lead) {
-  const score = latestScoreForLead(lead.id) ?? createOrUpdateObjectiveScore(lead);
+async function fallbackReview(lead: Lead) {
+  const score = (await latestScoreForLead(lead.organizationId, lead.id)) ?? (await createOrUpdateObjectiveScore(lead));
   return finalReviewSchema.parse({
     aiCommercialScore: score.finalScore,
     temperature: score.temperature,
@@ -107,64 +111,95 @@ async function callOpenAi<T>(input: Record<string, unknown>, system: string, sch
   return schema.parse(JSON.parse(raw));
 }
 
-function persistAiReview(
-  leadId: number,
-  analysisType: AiReview["analysisType"],
+async function persistAiReview(
+  lead: Lead,
+  analysisType: "lead_final_review" | "message_generation",
   input: Record<string, unknown>,
   output: Record<string, unknown>,
   summary?: string
 ) {
   const hash = inputHash(input);
-  const now = new Date().toISOString();
-  const cacheId = cacheKey("lead", String(leadId), analysisType, hash);
-  store.aiCache.set(cacheId, {
-    id: store.nextId("aiCache"),
-    entityType: "lead",
-    entityId: String(leadId),
-    analysisType,
-    model,
-    promptVersion,
-    inputHash: hash,
-    inputJson: input,
-    outputJson: output,
-    createdAt: now
+  await prisma.aiAnalysisCache.upsert({
+    where: {
+      organizationId_entityType_entityId_analysisType_model_promptVersion_inputHash: {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: String(lead.id),
+        analysisType,
+        model,
+        promptVersion,
+        inputHash: hash
+      }
+    },
+    create: {
+      organizationId: lead.organizationId,
+      entityType: "lead",
+      entityId: String(lead.id),
+      analysisType,
+      model,
+      promptVersion,
+      inputHash: hash,
+      inputJson: input as any,
+      outputJson: output as any
+    },
+    update: {
+      outputJson: output as any
+    }
   });
 
-  const review: AiReview = {
-    id: store.nextId("aiReview"),
-    leadId,
-    analysisType,
-    model,
-    promptVersion,
-    inputHash: hash,
-    inputJson: input,
-    outputJson: output,
-    summary,
-    createdAt: now
-  };
-  store.aiReviews.set(review.id, review);
-  return review;
+  return prisma.leadAiReview.create({
+    data: {
+      organizationId: lead.organizationId,
+      leadId: lead.id,
+      analysisType,
+      model,
+      promptVersion,
+      inputHash: hash,
+      inputJson: input as any,
+      outputJson: output as any,
+      summary
+    }
+  });
+}
+
+async function cachedAiOutput(lead: Lead, analysisType: string, input: Record<string, unknown>) {
+  const hash = inputHash(input);
+  return prisma.aiAnalysisCache.findUnique({
+    where: {
+      organizationId_entityType_entityId_analysisType_model_promptVersion_inputHash: {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: String(lead.id),
+        analysisType,
+        model,
+        promptVersion,
+        inputHash: hash
+      }
+    }
+  });
 }
 
 export async function reviewLead(lead: Lead) {
-  const input = leadInput(lead);
-  const hash = inputHash(input);
-  const cached = store.aiCache.get(cacheKey("lead", String(lead.id), "lead_final_review", hash));
-  const output = cached?.outputJson ?? (await callOpenAi(
-    input,
-    "Você é um analista comercial B2B. Retorne apenas JSON válido para classificação comercial do lead. Não invente dados.",
-    finalReviewSchema
-  )) ?? fallbackReview(lead);
+  const input = await leadInput(lead);
+  const cached = await cachedAiOutput(lead, "lead_final_review", input);
+  const output =
+    cached?.outputJson ??
+    (await callOpenAi(
+      input,
+      "Você é um analista comercial B2B. Retorne apenas JSON válido para classificação comercial do lead. Não invente dados.",
+      finalReviewSchema
+    )) ??
+    (await fallbackReview(lead));
 
   const parsed = finalReviewSchema.parse(output);
-  persistAiReview(lead.id, "lead_final_review", input, parsed, parsed.summary);
-  createOrUpdateObjectiveScore(lead);
+  await persistAiReview(lead, "lead_final_review", input, parsed, parsed.summary);
+  await createOrUpdateObjectiveScore(lead);
   return parsed;
 }
 
 export async function generateMessage(lead: Lead): Promise<GeneratedMessage> {
   const input = {
-    ...leadInput(lead),
+    ...(await leadInput(lead)),
     rules: [
       "Não parecer spam",
       "Não prometer resultado",
@@ -172,26 +207,28 @@ export async function generateMessage(lead: Lead): Promise<GeneratedMessage> {
       "Ter CTA leve"
     ]
   };
-  const hash = inputHash(input);
-  const cached = store.aiCache.get(cacheKey("lead", String(lead.id), "message_generation", hash));
-  const output = cached?.outputJson ?? (await callOpenAi(
-    input,
-    "Você é um especialista em prospecção B2B consultiva. Retorne apenas JSON válido com uma mensagem curta para contato humano manual.",
-    messageSchema
-  )) ?? fallbackMessage(lead);
+  const cached = await cachedAiOutput(lead, "message_generation", input);
+  const output =
+    cached?.outputJson ??
+    (await callOpenAi(
+      input,
+      "Você é um especialista em prospecção B2B consultiva. Retorne apenas JSON válido com uma mensagem curta para contato humano manual.",
+      messageSchema
+    )) ??
+    fallbackMessage(lead);
 
   const parsed = messageSchema.parse(output);
-  persistAiReview(lead.id, "message_generation", input, parsed, parsed.message);
+  await persistAiReview(lead, "message_generation", input, parsed, parsed.message);
 
-  const message: GeneratedMessage = {
-    id: store.nextId("message"),
-    leadId: lead.id,
-    messageType: "first_contact",
-    channel: parsed.channel,
-    content: parsed.message,
-    tone: parsed.tone,
-    createdAt: new Date().toISOString()
-  };
-  store.messages.set(message.id, message);
-  return message;
+  const message = await prisma.generatedMessage.create({
+    data: {
+      organizationId: lead.organizationId,
+      leadId: lead.id,
+      messageType: "first_contact",
+      channel: parsed.channel,
+      content: parsed.message,
+      tone: parsed.tone
+    }
+  });
+  return serializeMessage(message);
 }

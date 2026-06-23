@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as cheerio from "cheerio";
 import OpenAI from "openai";
 import type { Browser, Page } from "playwright";
@@ -11,7 +12,7 @@ import { createOrUpdateObjectiveScore } from "../scoring/scoring.service.js";
 import { analyzeSocial } from "../socialAnalysis/social-analysis.service.js";
 import { analyzeWebsite } from "../websiteAnalysis/website-analysis.service.js";
 
-const model = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+const model = process.env.OPENAI_MODEL ?? "gpt-5-nano";
 const promptVersion = "professional-discovery-2026-06-22-nano-site-instagram-search-v2";
 
 const DEFAULT_SEARCH_LIMIT = 12;

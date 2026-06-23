@@ -8,21 +8,88 @@ datasource db {
 }
 
 model User {
-  id           Int                     @id @default(autoincrement())
+  id           Int                      @id @default(autoincrement())
   name         String
-  email        String                  @unique
-  passwordHash String                  @map("password_hash")
-  role         String                  @default("admin")
-  createdAt    DateTime                @default(now()) @map("created_at")
-  updatedAt    DateTime                @updatedAt @map("updated_at")
+  email        String                   @unique
+  passwordHash String                   @map("password_hash")
+  role         String                   @default("admin")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
   interactions CommercialInteraction[]
   campaigns    SearchCampaign[]
+  memberships  OrganizationMember[]
+  requestedJobs JobRun[]
+  sentInvitations OrganizationInvitation[] @relation("OrganizationInvitationsSent")
 
   @@map("users")
 }
 
+model Organization {
+  id                  Int                     @id @default(autoincrement())
+  name                String
+  slug                String                  @unique
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+  members             OrganizationMember[]
+  campaigns           SearchCampaign[]
+  leads               Lead[]
+  digitalPresence     LeadDigitalPresence[]
+  websiteSnapshots    LeadWebsiteSnapshot[]
+  socialSnapshots     LeadSocialSnapshot[]
+  embeddings          LeadEmbedding[]
+  discoveryCandidates DiscoveryCandidate[]
+  scores              LeadScore[]
+  aiReviews           LeadAiReview[]
+  aiCache             AiAnalysisCache[]
+  interactions        CommercialInteraction[]
+  messages            GeneratedMessage[]
+  scoreWeightVersions ScoreWeightVersion[]
+  jobRuns             JobRun[]
+  invitations         OrganizationInvitation[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             Int            @id @default(autoincrement())
+  organizationId Int            @map("organization_id")
+  userId         Int            @map("user_id")
+  role           MembershipRole @default(admin)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  user           User           @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId], map: "organization_members_org_user_unique")
+  @@index([userId], map: "organization_members_user_id_idx")
+  @@map("organization_members")
+}
+
+model OrganizationInvitation {
+  id             Int            @id @default(autoincrement())
+  organizationId Int            @map("organization_id")
+  email          String
+  role           MembershipRole @default(operator)
+  tokenHash      String         @unique @map("token_hash") @db.Char(64)
+  invitedBy      Int?           @map("invited_by")
+  acceptedAt     DateTime?      @map("accepted_at")
+  acceptedBy     Int?           @map("accepted_by")
+  expiresAt      DateTime       @map("expires_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  inviter        User?          @relation("OrganizationInvitationsSent", fields: [invitedBy], references: [id])
+
+  @@index([organizationId, email], map: "organization_invitations_org_email_idx")
+  @@index([email], map: "organization_invitations_email_idx")
+  @@index([expiresAt], map: "organization_invitations_expires_at_idx")
+  @@index([invitedBy], map: "organization_invitations_invited_by_fkey")
+  @@map("organization_invitations")
+}
+
 model SearchCampaign {
   id                  Int                  @id @default(autoincrement())
+  organizationId      Int                  @map("organization_id")
   name                String
   niche               String
   city                String
@@ -38,13 +105,17 @@ model SearchCampaign {
   discoveryCandidates DiscoveryCandidate[]
   leads               Lead[]
   user                User?                @relation(fields: [createdBy], references: [id])
+  organization        Organization         @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, status], map: "search_campaigns_org_status_idx")
+  @@index([organizationId, createdAt], map: "search_campaigns_org_created_at_idx")
   @@index([createdBy], map: "search_campaigns_created_by_fkey")
   @@map("search_campaigns")
 }
 
 model Lead {
   id                   Int                     @id @default(autoincrement())
+  organizationId       Int                     @map("organization_id")
   campaignId           Int?                    @map("campaign_id")
   businessName         String                  @map("business_name")
   personName           String?                 @map("person_name")
@@ -78,13 +149,18 @@ model Lead {
   socialSnapshots      LeadSocialSnapshot[]
   websiteSnapshots     LeadWebsiteSnapshot[]
   campaign             SearchCampaign?         @relation(fields: [campaignId], references: [id])
+  organization         Organization            @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, campaignId], map: "leads_org_campaign_idx")
+  @@index([organizationId, city], map: "leads_org_city_idx")
+  @@index([organizationId, niche], map: "leads_org_niche_idx")
   @@index([campaignId], map: "leads_campaign_id_fkey")
   @@map("leads")
 }
 
 model LeadDigitalPresence {
   id                        Int      @id @default(autoincrement())
+  organizationId            Int      @map("organization_id")
   leadId                    Int      @unique @map("lead_id")
   hasWebsite                Boolean  @default(false) @map("has_website")
   websiteUrl                String?  @map("website_url")
@@ -111,12 +187,15 @@ model LeadDigitalPresence {
   createdAt                 DateTime @default(now()) @map("created_at")
   updatedAt                 DateTime @updatedAt @map("updated_at")
   lead                      Lead     @relation(fields: [leadId], references: [id])
+  organization              Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId], map: "lead_digital_presence_org_idx")
   @@map("lead_digital_presence")
 }
 
 model LeadWebsiteSnapshot {
   id                 Int      @id @default(autoincrement())
+  organizationId     Int      @map("organization_id")
   leadId             Int      @map("lead_id")
   url                String
   httpStatus         Int?     @map("http_status")
@@ -141,13 +220,16 @@ model LeadWebsiteSnapshot {
   aiReviewJson       Json?    @map("ai_review_json")
   createdAt          DateTime @default(now()) @map("created_at")
   lead               Lead     @relation(fields: [leadId], references: [id])
+  organization       Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, leadId, createdAt], map: "lead_website_snapshots_org_lead_created_idx")
   @@index([leadId], map: "lead_website_snapshots_lead_id_fkey")
   @@map("lead_website_snapshots")
 }
 
 model LeadSocialSnapshot {
   id                 Int      @id @default(autoincrement())
+  organizationId     Int      @map("organization_id")
   leadId             Int      @map("lead_id")
   platform           String
   profileUrl         String   @map("profile_url")
@@ -163,13 +245,16 @@ model LeadSocialSnapshot {
   aiReviewJson       Json?    @map("ai_review_json")
   createdAt          DateTime @default(now()) @map("created_at")
   lead               Lead     @relation(fields: [leadId], references: [id])
+  organization       Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, leadId, createdAt], map: "lead_social_snapshots_org_lead_created_idx")
   @@index([leadId], map: "lead_social_snapshots_lead_id_fkey")
   @@map("lead_social_snapshots")
 }
 
 model LeadEmbedding {
   id              Int      @id @default(autoincrement())
+  organizationId  Int      @map("organization_id")
   leadId          Int?     @map("lead_id")
   embeddingType   String   @map("embedding_type")
   sourceText      String   @map("source_text") @db.Text
@@ -178,13 +263,16 @@ model LeadEmbedding {
   metadataJson    Json?    @map("metadata_json")
   createdAt       DateTime @default(now()) @map("created_at")
   lead            Lead?    @relation(fields: [leadId], references: [id])
+  organization    Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, embeddingType], map: "lead_embeddings_org_type_idx")
   @@index([leadId], map: "lead_embeddings_lead_id_fkey")
   @@map("lead_embeddings")
 }
 
 model DiscoveryCandidate {
   id              Int            @id @default(autoincrement())
+  organizationId  Int            @map("organization_id")
   campaignId      Int            @map("campaign_id")
   leadId          Int?           @map("lead_id")
   title           String
@@ -198,7 +286,9 @@ model DiscoveryCandidate {
   createdAt       DateTime       @default(now()) @map("created_at")
   campaign        SearchCampaign @relation(fields: [campaignId], references: [id])
   lead            Lead?          @relation(fields: [leadId], references: [id])
+  organization    Organization   @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, campaignId, status], map: "discovery_candidates_org_campaign_status_idx")
   @@index([campaignId], map: "discovery_candidates_campaign_id_fkey")
   @@index([leadId], map: "discovery_candidates_lead_id_fkey")
   @@map("discovery_candidates")
@@ -206,16 +296,20 @@ model DiscoveryCandidate {
 
 model ScoreWeightVersion {
   id        Int      @id @default(autoincrement())
+  organizationId Int @map("organization_id")
   version   String
   weights   Json
   rationale Json
   createdAt DateTime @default(now()) @map("created_at")
+  organization Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, createdAt], map: "score_weight_versions_org_created_idx")
   @@map("score_weight_versions")
 }
 
 model LeadScore {
   id                       Int              @id @default(autoincrement())
+  organizationId           Int              @map("organization_id")
   leadId                   Int              @map("lead_id")
   objectiveScore           Int              @map("objective_score")
   aiCommercialScore        Int?             @map("ai_commercial_score")
@@ -229,13 +323,18 @@ model LeadScore {
   createdAt                DateTime         @default(now()) @map("created_at")
   updatedAt                DateTime         @updatedAt @map("updated_at")
   lead                     Lead             @relation(fields: [leadId], references: [id])
+  organization             Organization     @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, temperature], map: "lead_scores_org_temperature_idx")
+  @@index([organizationId, recommendedOffer], map: "lead_scores_org_offer_idx")
+  @@index([organizationId, leadId, createdAt], map: "lead_scores_org_lead_created_idx")
   @@index([leadId], map: "lead_scores_lead_id_fkey")
   @@map("lead_scores")
 }
 
 model LeadAiReview {
   id            Int      @id @default(autoincrement())
+  organizationId Int    @map("organization_id")
   leadId        Int?     @map("lead_id")
   analysisType  String   @map("analysis_type") @db.VarChar(64)
   model         String   @db.VarChar(64)
@@ -249,13 +348,16 @@ model LeadAiReview {
   summary       String?  @db.Text
   createdAt     DateTime @default(now()) @map("created_at")
   lead          Lead?    @relation(fields: [leadId], references: [id])
+  organization  Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, analysisType, createdAt], map: "lead_ai_reviews_org_type_created_idx")
   @@index([leadId], map: "lead_ai_reviews_lead_id_fkey")
   @@map("lead_ai_reviews")
 }
 
 model AiAnalysisCache {
   id            Int      @id @default(autoincrement())
+  organizationId Int    @map("organization_id")
   entityType    String   @map("entity_type") @db.VarChar(64)
   entityId      String   @map("entity_id") @db.VarChar(64)
   analysisType  String   @map("analysis_type") @db.VarChar(64)
@@ -268,13 +370,15 @@ model AiAnalysisCache {
   tokensOutput  Int?     @map("tokens_output")
   costEstimate  Decimal? @map("cost_estimate") @db.Decimal(10, 6)
   createdAt     DateTime @default(now()) @map("created_at")
+  organization  Organization @relation(fields: [organizationId], references: [id])
 
-  @@unique([entityType, entityId, analysisType, model, promptVersion, inputHash], map: "ai_analysis_cache_unique")
+  @@unique([organizationId, entityType, entityId, analysisType, model, promptVersion, inputHash], map: "ai_analysis_cache_unique")
   @@map("ai_analysis_cache")
 }
 
 model CommercialInteraction {
   id             Int               @id @default(autoincrement())
+  organizationId Int               @map("organization_id")
   leadId         Int               @map("lead_id")
   status         InteractionStatus
   contactChannel String?           @map("contact_channel")
@@ -287,7 +391,10 @@ model CommercialInteraction {
   updatedAt      DateTime          @updatedAt @map("updated_at")
   user           User?             @relation(fields: [createdBy], references: [id])
   lead           Lead              @relation(fields: [leadId], references: [id])
+  organization   Organization      @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, status], map: "commercial_interactions_org_status_idx")
+  @@index([organizationId, leadId, updatedAt], map: "commercial_interactions_org_lead_updated_idx")
   @@index([createdBy], map: "commercial_interactions_created_by_fkey")
   @@index([leadId], map: "commercial_interactions_lead_id_fkey")
   @@map("commercial_interactions")
@@ -295,6 +402,7 @@ model CommercialInteraction {
 
 model GeneratedMessage {
   id          Int      @id @default(autoincrement())
+  organizationId Int   @map("organization_id")
   leadId      Int      @map("lead_id")
   messageType String   @map("message_type")
   channel     String
@@ -302,9 +410,49 @@ model GeneratedMessage {
   tone        String
   createdAt   DateTime @default(now()) @map("created_at")
   lead        Lead     @relation(fields: [leadId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
+  @@index([organizationId, leadId, createdAt], map: "generated_messages_org_lead_created_idx")
   @@index([leadId], map: "generated_messages_lead_id_fkey")
   @@map("generated_messages")
+}
+
+model JobRun {
+  id              Int          @id @default(autoincrement())
+  organizationId  Int          @map("organization_id")
+  requestedBy     Int?         @map("requested_by")
+  operation       String       @db.VarChar(64)
+  idempotencyKey  String       @map("idempotency_key") @db.VarChar(128)
+  inputHash       String       @map("input_hash") @db.Char(64)
+  status          JobRunStatus @default(queued)
+  inputJson       Json?        @map("input_json")
+  outputJson      Json?        @map("output_json")
+  error           String?      @db.Text
+  startedAt       DateTime?    @map("started_at")
+  finishedAt      DateTime?    @map("finished_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  user            User?        @relation(fields: [requestedBy], references: [id])
+
+  @@unique([organizationId, operation, idempotencyKey], map: "job_runs_org_operation_idempotency_unique")
+  @@index([organizationId, status, createdAt], map: "job_runs_org_status_created_idx")
+  @@map("job_runs")
+}
+
+enum MembershipRole {
+  admin
+  manager
+  operator
+  viewer
+}
+
+enum JobRunStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
 }
 
 enum CampaignStatus {

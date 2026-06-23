@@ -1,0 +1,121 @@
+/* Responsive & Mobile styles */
+@media (max-width: 1024px) {
+  .auth-layout {
+    grid-template-columns: 1fr;
+  }
+  .auth-showcase {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  body {
+    overflow: hidden;
+  }
+  
+  .hamburger-btn {
+    display: inline-flex !important;
+  }
+  
+  .shell {
+    height: 100vh;
+    overflow: hidden;
+  }
+  
+  .sidebar {
+    position: fixed !important;
+    top: 0;
+    left: -280px;
+    height: 100vh !important;
+    width: 280px !important;
+    z-index: 1000 !important;
+    transition: left var(--transition-fast) ease-in-out;
+    border-right: 1px solid var(--border-color);
+    border-bottom: 0 !important;
+    background: var(--bg-sidebar) !important;
+    padding: 30px 24px !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  
+  .sidebar.open {
+    left: 0 !important;
+  }
+  
+  .sidebar-inner {
+    gap: 28px !important;
+  }
+  
+  .nav {
+    flex-direction: column !important;
+    overflow-x: visible !important;
+    padding-bottom: 0 !important;
+  }
+  
+  .nav a {
+    white-space: normal !important;
+  }
+  
+  .sidebar-card {
+    display: block !important;
+  }
+  
+  .shell-main {
+    margin-left: 0 !important;
+    height: 100vh !important;
+  }
+  
+  .topbar {
+    padding: 16px 20px !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+  }
+  
+  .topbar h1 {
+    font-size: 18px !important;
+    margin-top: 2px !important;
+  }
+  
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  
+  .content-shell {
+    padding: 20px !important;
+  }
+  
+  .grid.cols-2, .grid.cols-3, .grid.cols-4, .grid.cols-15 {
+    grid-template-columns: 1fr;
+  }
+  
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+  
+  /* Sidebar Overlay backdrop */
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(5, 8, 17, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 990;
+    animation: overlay-fade-in var(--transition-fast) ease-out;
+  }
+
+  @keyframes overlay-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+

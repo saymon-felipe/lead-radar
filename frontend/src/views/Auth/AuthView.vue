@@ -2,7 +2,7 @@
   <section class="auth-layout">
     <div class="auth-showcase">
       <span class="eyebrow">Lead Radar</span>
-      <h1>Operação comercial mais clara, previsível e pronta para ganhar ritmo.</h1>
+      <h1>Operacao comercial mais clara, previsivel e pronta para ganhar ritmo.</h1>
       <p>
         Entre para acompanhar campanhas, leads priorizados, sinais digitais e o funil comercial em uma interface mais
         organizada.
@@ -10,15 +10,15 @@
 
       <div class="auth-feature-list">
         <div class="auth-feature">
-          <strong>Priorização de leads</strong>
+          <strong>Priorizacao de leads</strong>
           <span>Veja quem merece contato primeiro com score, temperatura e oferta sugerida.</span>
         </div>
         <div class="auth-feature">
           <strong>Campanhas por nicho e cidade</strong>
-          <span>Organize a prospecção em frentes claras, com leitura rápida do desempenho comercial.</span>
+          <span>Organize a prospeccao em frentes claras, com leitura rapida do desempenho comercial.</span>
         </div>
         <div class="auth-feature">
-          <strong>Análise de presença digital</strong>
+          <strong>Analise de presenca digital</strong>
           <span>Entenda sinais de site, redes sociais e oportunidades antes de escrever a abordagem.</span>
         </div>
       </div>
@@ -35,9 +35,9 @@
       </div>
 
       <div class="auth-card-header">
-        <h2>{{ mode === "login" ? "Acessar conta" : "Criar conta de acesso" }}</h2>
+        <h2>{{ mode === "login" ? "Acessar conta" : "Criar conta" }}</h2>
         <p>
-          {{ mode === "login" ? "Use suas credenciais para entrar no painel." : "Cadastre um administrador para iniciar a operação." }}
+          {{ mode === "login" ? "Use suas credenciais para entrar no painel." : "Cadastre-se para iniciar na plataforma." }}
         </p>
       </div>
 
@@ -71,7 +71,7 @@
         </label>
         <p v-if="error" class="error">{{ error }}</p>
         <button :disabled="loading" class="primary-action" type="submit">
-          {{ loading ? "Criando..." : "Criar conta" }}
+          {{ loading ? "Cadastrando..." : "Criar conta" }}
         </button>
       </form>
     </div>
@@ -120,7 +120,7 @@ export default defineComponent({
         await authSession.register(this.registerForm);
         await this.$router.push("/dashboard");
       } catch (error) {
-        this.error = error instanceof Error ? error.message : "Falha ao criar conta";
+        this.error = error instanceof Error ? error.message : "Falha ao criar empresa";
       } finally {
         this.loading = false;
       }

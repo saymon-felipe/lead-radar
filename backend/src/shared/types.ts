@@ -1,6 +1,6 @@
 export type CampaignStatus = "draft" | "running" | "paused" | "completed" | "failed";
 export type Temperature = "hot" | "warm" | "medium" | "cold" | "discard";
-export type UserRole = "admin";
+export type UserRole = "admin" | "manager" | "operator" | "viewer";
 export type RecommendedOffer =
   | "landing_page"
   | "institutional_site"
@@ -24,6 +24,7 @@ export type InteractionStatus =
 
 export interface Campaign {
   id: number;
+  organizationId: number;
   name: string;
   niche: string;
   city: string;
@@ -52,12 +53,24 @@ export interface AuthSessionPayload {
   email: string;
   name: string;
   role: UserRole;
+  organizationId: number;
+  organizationName: string;
   iat: number;
   exp: number;
 }
 
+export interface AuthContext {
+  userId: number;
+  organizationId: number;
+  organizationName: string;
+  role: UserRole;
+  email: string;
+  name: string;
+}
+
 export interface Lead {
   id: number;
+  organizationId: number;
   campaignId?: number;
   businessName: string;
   personName?: string;
@@ -103,6 +116,7 @@ export interface ScoreBreakdownItem {
 
 export interface LeadScore {
   id: number;
+  organizationId: number;
   leadId: number;
   objectiveScore: number;
   aiCommercialScore?: number;
@@ -119,6 +133,7 @@ export interface LeadScore {
 
 export interface DigitalPresence {
   id: number;
+  organizationId: number;
   leadId: number;
   hasWebsite: boolean;
   websiteUrl?: string;
@@ -148,6 +163,7 @@ export interface DigitalPresence {
 
 export interface WebsiteSnapshot {
   id: number;
+  organizationId: number;
   leadId: number;
   url: string;
   httpStatus?: number;
@@ -184,6 +200,7 @@ export interface WebsiteAiReview {
 
 export interface SocialSnapshot {
   id: number;
+  organizationId: number;
   leadId: number;
   platform: "instagram" | "facebook" | "linkedin" | "google_maps" | "unknown";
   profileUrl: string;
@@ -222,6 +239,7 @@ export type EmbeddingType =
 
 export interface LeadEmbedding {
   id: number;
+  organizationId: number;
   leadId?: number;
   embeddingType: EmbeddingType;
   sourceText: string;
@@ -242,6 +260,7 @@ export interface SimilarLeadResult {
 
 export interface DiscoveryCandidate {
   id: number;
+  organizationId: number;
   campaignId: number;
   title: string;
   url: string;
@@ -288,6 +307,7 @@ export interface CampaignValidationReport {
 
 export interface ScoreWeightVersion {
   id: number;
+  organizationId: number;
   version: string;
   weights: {
     objective: number;
@@ -301,6 +321,7 @@ export interface ScoreWeightVersion {
 
 export interface AiReview {
   id: number;
+  organizationId: number;
   leadId?: number;
   analysisType:
     | "lead_final_review"
@@ -323,6 +344,7 @@ export interface AiReview {
 
 export interface AiCacheEntry {
   id: number;
+  organizationId: number;
   entityType: string;
   entityId: string;
   analysisType: string;
@@ -339,6 +361,7 @@ export interface AiCacheEntry {
 
 export interface CommercialInteraction {
   id: number;
+  organizationId: number;
   leadId: number;
   status: InteractionStatus;
   contactChannel?: string;
@@ -346,12 +369,14 @@ export interface CommercialInteraction {
   responseAt?: string;
   notes?: string;
   nextActionAt?: string;
+  createdBy?: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface GeneratedMessage {
   id: number;
+  organizationId: number;
   leadId: number;
   messageType: string;
   channel: "whatsapp" | "email" | "instagram";

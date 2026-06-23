@@ -1,8 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { prisma } from "../../shared/prisma.js";
+import { requireAuthContext, requireRole } from "../../shared/auth/guard.js";
 import { HttpError } from "../../shared/errors/http-error.js";
-import { store } from "../../shared/store/memory-store.js";
-import type { Campaign, CampaignStatus } from "../../shared/types.js";
+import { serializeCampaign } from "../../shared/http/serializers.js";
+import type { CampaignStatus } from "../../shared/types.js";
 
 const campaignPayload = z.object({
   name: z.string().min(1),
@@ -14,65 +16,80 @@ const campaignPayload = z.object({
   targetQuantity: z.number().int().positive().optional()
 });
 
-function campaignMetrics(campaignId: number) {
-  const leads = Array.from(store.leads.values()).filter((lead) => lead.campaignId === campaignId);
-  const scores = leads
-    .map((lead) => Array.from(store.scores.values()).find((score) => score.leadId === lead.id))
-    .filter(Boolean);
+async function campaignMetrics(organizationId: number, campaignId: number) {
+  const [leadsFound, hotLeads, warmLeads] = await Promise.all([
+    prisma.lead.count({ where: { organizationId, campaignId } }),
+    prisma.leadScore.count({
+      where: { organizationId, temperature: "hot", lead: { campaignId, organizationId } }
+    }),
+    prisma.leadScore.count({
+      where: { organizationId, temperature: "warm", lead: { campaignId, organizationId } }
+    })
+  ]);
 
-  return {
-    leadsFound: leads.length,
-    hotLeads: scores.filter((score) => score?.temperature === "hot").length,
-    warmLeads: scores.filter((score) => score?.temperature === "warm").length
-  };
+  return { leadsFound, hotLeads, warmLeads };
+}
+
+async function findCampaign(organizationId: number, id: number) {
+  const campaign = await prisma.searchCampaign.findFirst({ where: { id, organizationId } });
+  if (!campaign) throw new HttpError(404, "Campanha não encontrada");
+  return campaign;
 }
 
 export async function campaignRoutes(app: FastifyInstance) {
-  app.get("/api/campaigns", async () => {
-    return Array.from(store.campaigns.values()).map((campaign) => ({
-      ...campaign,
-      metrics: campaignMetrics(campaign.id)
-    }));
+  app.get("/api/campaigns", async (request) => {
+    const { organizationId } = requireAuthContext(request);
+    const campaigns = await prisma.searchCampaign.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return Promise.all(
+      campaigns.map(async (campaign) => ({
+        ...serializeCampaign(campaign),
+        metrics: await campaignMetrics(organizationId, campaign.id)
+      }))
+    );
   });
 
   app.post("/api/campaigns", async (request, reply) => {
+    const context = requireRole(request, "operator");
     const payload = campaignPayload.parse(request.body);
-    const now = new Date().toISOString();
-    const campaign: Campaign = {
-      id: store.nextId("campaign"),
-      ...payload,
-      createdAt: now,
-      updatedAt: now
-    };
-    store.campaigns.set(campaign.id, campaign);
+    const campaign = await prisma.searchCampaign.create({
+      data: {
+        organizationId: context.organizationId,
+        createdBy: context.userId,
+        ...payload
+      }
+    });
     reply.code(201);
-    return campaign;
+    return serializeCampaign(campaign);
   });
 
   app.get("/api/campaigns/:id", async (request) => {
+    const { organizationId } = requireAuthContext(request);
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const campaign = store.campaigns.get(id);
-    if (!campaign) throw new HttpError(404, "Campanha não encontrada");
-    return { ...campaign, metrics: campaignMetrics(campaign.id) };
+    const campaign = await findCampaign(organizationId, id);
+    return { ...serializeCampaign(campaign), metrics: await campaignMetrics(organizationId, campaign.id) };
   });
 
   app.put("/api/campaigns/:id", async (request) => {
+    const { organizationId } = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    const current = store.campaigns.get(id);
-    if (!current) throw new HttpError(404, "Campanha não encontrada");
+    await findCampaign(organizationId, id);
     const payload = campaignPayload.partial().parse(request.body);
-    const updated: Campaign = {
-      ...current,
-      ...payload,
-      updatedAt: new Date().toISOString()
-    };
-    store.campaigns.set(id, updated);
-    return updated;
+    const updated = await prisma.searchCampaign.update({
+      where: { id },
+      data: payload
+    });
+    return serializeCampaign(updated);
   });
 
   app.delete("/api/campaigns/:id", async (request, reply) => {
+    const { organizationId } = requireRole(request, "manager");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.campaigns.delete(id)) throw new HttpError(404, "Campanha não encontrada");
+    await findCampaign(organizationId, id);
+    await prisma.searchCampaign.delete({ where: { id } });
     reply.code(204);
   });
 
@@ -82,18 +99,18 @@ export async function campaignRoutes(app: FastifyInstance) {
     ["/api/campaigns/:id/complete", "completed"]
   ] as Array<[string, CampaignStatus]>) {
     app.post(path, async (request) => {
+      const { organizationId } = requireRole(request, "operator");
       const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-      const current = store.campaigns.get(id);
-      if (!current) throw new HttpError(404, "Campanha não encontrada");
-      const updated: Campaign = {
-        ...current,
-        status,
-        startedAt: status === "running" ? new Date().toISOString() : current.startedAt,
-        finishedAt: status === "completed" ? new Date().toISOString() : current.finishedAt,
-        updatedAt: new Date().toISOString()
-      };
-      store.campaigns.set(id, updated);
-      return updated;
+      const current = await findCampaign(organizationId, id);
+      const updated = await prisma.searchCampaign.update({
+        where: { id: current.id },
+        data: {
+          status,
+          startedAt: status === "running" ? new Date() : current.startedAt,
+          finishedAt: status === "completed" ? new Date() : current.finishedAt
+        }
+      });
+      return serializeCampaign(updated);
     });
   }
 }

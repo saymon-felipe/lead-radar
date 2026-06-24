@@ -77,6 +77,8 @@ export const api = {
   similarLeads: (id: number) => request<SimilarLead[]>(`/api/leads/${id}/similar`),
   discoverCampaign: (id: number, level: DiscoverySearchLevel = "quick") =>
     request<DiscoveryResult>(`/api/campaigns/${id}/discover?level=${encodeURIComponent(level)}`, { method: "POST", body: "{}" }),
+  registerWorker: (payload: { deviceId: string; environment: string; appVersion: string; hostname?: string }) =>
+    request<{ success: boolean; deviceId: string; environment: string; workerToken: string; refreshToken: string; expiresAt: string; apiBaseUrl?: string }>("/api/workers/register", { method: "POST", body: JSON.stringify(payload) }),
   stopCampaignDiscovery: (id: number) =>
     request<DiscoveryStopResult>(`/api/campaigns/${id}/discover/stop`, { method: "POST", body: "{}" }),
   discoveryStatus: (id: number) => request<DiscoveryStatus | null>(`/api/campaigns/${id}/discovery-status`),

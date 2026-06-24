@@ -23,7 +23,14 @@ export interface DiscoveryResult {
     targetFinalLeads?: number;
     [key: string]: unknown;
   };
+  runId?: number;
+  commandToken?: string;
+  campaignId?: number;
+  level?: string;
+  apiBaseUrl?: string;
+  options?: { limit: number };
 }
+
 
 export interface DiscoveryStopResult {
   stopped: boolean;

@@ -21,6 +21,12 @@ Este diretorio transforma o plano de negocio do PDF em etapas executaveis para c
 
 ## Ordem das etapas
 
+Plano transversal:
+
+- [Migracao do scraper para worker local](../PLAN.md)
+
+Etapas originais:
+
 1. [MVP operacional](./01-mvp-operacional.md)
 2. [Analise de presenca digital](./02-analise-presenca-digital.md)
 3. [Embeddings e similaridade](./03-embeddings-similaridade.md)
@@ -70,4 +76,3 @@ Fora do MVP:
 - Toda pontuacao tem breakdown auditavel.
 - O usuario consegue criar campanha, importar/cadastrar leads, filtrar, abrir detalhes, calcular score, gerar mensagem, registrar contato e exportar CSV.
 - O contato comercial permanece humano, individual e consultivo.
-

@@ -20,6 +20,7 @@ model User {
   memberships  OrganizationMember[]
   requestedJobs JobRun[]
   sentInvitations OrganizationInvitation[] @relation("OrganizationInvitationsSent")
+  workerDevices WorkerDevice[]
 
   @@map("users")
 }
@@ -46,6 +47,8 @@ model Organization {
   scoreWeightVersions ScoreWeightVersion[]
   jobRuns             JobRun[]
   invitations         OrganizationInvitation[]
+  workerDevices       WorkerDevice[]
+  discoveryRuns       DiscoveryRun[]
 
   @@map("organizations")
 }
@@ -106,6 +109,7 @@ model SearchCampaign {
   leads               Lead[]
   user                User?                @relation(fields: [createdBy], references: [id])
   organization        Organization         @relation(fields: [organizationId], references: [id])
+  discoveryRuns       DiscoveryRun[]
 
   @@index([organizationId, status], map: "search_campaigns_org_status_idx")
   @@index([organizationId, createdAt], map: "search_campaigns_org_created_at_idx")
@@ -493,4 +497,102 @@ enum InteractionStatus {
   lost
   no_response
   invalid_contact
+}
+
+model WorkerDevice {
+  id             Int            @id @default(autoincrement())
+  deviceId       String         @unique @map("device_id")
+  userId         Int            @map("user_id")
+  organizationId Int            @map("organization_id")
+  environment    String
+  appVersion     String         @map("app_version")
+  hostname       String?
+  status         String
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  user           User           @relation(fields: [userId], references: [id])
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  sessions       WorkerSession[]
+  heartbeats     WorkerHeartbeat[]
+  discoveryRuns  DiscoveryRun[]
+
+  @@index([organizationId], map: "worker_devices_org_idx")
+  @@map("worker_devices")
+}
+
+model WorkerSession {
+  id               Int          @id @default(autoincrement())
+  workerDeviceId   Int          @map("worker_device_id")
+  accessTokenHash  String       @unique @map("access_token_hash")
+  refreshTokenHash String       @unique @map("refresh_token_hash")
+  expiresAt        DateTime     @map("expires_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  device           WorkerDevice @relation(fields: [workerDeviceId], references: [id])
+
+  @@map("worker_sessions")
+}
+
+model WorkerHeartbeat {
+  id             Int          @id @default(autoincrement())
+  workerDeviceId Int          @map("worker_device_id")
+  status         String
+  cpuUsage       Float?       @map("cpu_usage")
+  ramUsage       Float?       @map("ram_usage")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  device         WorkerDevice @relation(fields: [workerDeviceId], references: [id])
+
+  @@index([workerDeviceId, createdAt], map: "worker_heartbeats_device_created_idx")
+  @@map("worker_heartbeats")
+}
+
+model DiscoveryRun {
+  id             Int                    @id @default(autoincrement())
+  campaignId     Int                    @map("campaign_id")
+  organizationId Int                    @map("organization_id")
+  workerDeviceId Int?                   @map("worker_device_id")
+  status         String
+  level          String
+  options        Json?
+  error          String?                @db.Text
+  startedAt      DateTime?              @map("started_at")
+  finishedAt     DateTime?              @map("finished_at")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  campaign       SearchCampaign         @relation(fields: [campaignId], references: [id])
+  organization   Organization           @relation(fields: [organizationId], references: [id])
+  workerDevice   WorkerDevice?          @relation(fields: [workerDeviceId], references: [id])
+  events         DiscoveryRunEvent[]
+  artifacts      DiscoveryRunArtifact[]
+
+  @@index([organizationId, status], map: "discovery_runs_org_status_idx")
+  @@map("discovery_runs")
+}
+
+model DiscoveryRunEvent {
+  id        Int          @id @default(autoincrement())
+  runId     Int          @map("run_id")
+  sequence  Int
+  kind      String
+  title     String
+  leadName  String?      @map("lead_name")
+  url       String?
+  payload   Json
+  createdAt DateTime     @default(now()) @map("created_at")
+  run       DiscoveryRun @relation(fields: [runId], references: [id])
+
+  @@index([runId, sequence], map: "discovery_run_events_run_seq_idx")
+  @@map("discovery_run_events")
+}
+
+model DiscoveryRunArtifact {
+  id        Int          @id @default(autoincrement())
+  runId     Int          @map("run_id")
+  type      String
+  path      String
+  uploadId  String?      @map("upload_id")
+  createdAt DateTime     @default(now()) @map("created_at")
+  run       DiscoveryRun @relation(fields: [runId], references: [id])
+
+  @@map("discovery_run_artifacts")
 }

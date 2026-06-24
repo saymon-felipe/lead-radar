@@ -5,9 +5,37 @@
         <h1>Campanhas</h1>
         <p>Crie campanhas por nicho e cidade para organizar a prospeccao.</p>
       </div>
-      <button class="secondary" @click="load" title="Recarregar dados das campanhas">
-        <i class="ri-refresh-line"></i> Atualizar
-      </button>
+      <div style="display: flex; gap: 1rem; align-items: center;">
+        <div 
+          v-if="workerStatus !== null"
+          :style="{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.35rem 0.75rem',
+            borderRadius: '50px',
+            fontSize: '0.85rem',
+            fontWeight: '500',
+            background: workerStatus ? (workerStatus.runStatus === 'running' ? '#fffbeb' : '#f0fdf4') : '#fef2f2',
+            color: workerStatus ? (workerStatus.runStatus === 'running' ? '#b45309' : '#15803d') : '#b91c1c',
+            border: '1px solid currentColor'
+          }"
+        >
+          <span 
+            :style="{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              background: workerStatus ? (workerStatus.runStatus === 'running' ? '#d97706' : '#16a34a') : '#dc2626',
+              display: 'inline-block'
+            }"
+          ></span>
+          Worker: {{ workerStatusText }}
+        </div>
+        <button class="secondary" @click="load" title="Recarregar dados das campanhas">
+          <i class="ri-refresh-line"></i> Atualizar
+        </button>
+      </div>
     </header>
 
     <CampaignForm :form="form" :error="error" :last-result="lastResult" @create="create" />
@@ -52,6 +80,8 @@ import {
   type DiscoveryStatus
 } from "../../services/api";
 import type { ColumnConfig } from "../../components/GenericGrid.vue";
+import { workerClient } from "../../services/workerClient";
+import { authSession } from "../../services/session";
 
 const discoveryLevels: DiscoverySearchLevel[] = ["nano", "quick", "medium", "deep"];
 
@@ -90,14 +120,30 @@ export default defineComponent({
       discoveryLevels: {} as Record<number, DiscoverySearchLevel>,
       watchingCampaignId: undefined as number | undefined,
       liveDiscovery: undefined as DiscoveryStatus | undefined,
-      discoveryPoller: undefined as number | undefined
+      discoveryPoller: undefined as number | undefined,
+      workerStatus: null as any,
+      workerTimer: undefined as number | undefined
     };
+  },
+  computed: {
+    workerStatusText(): string {
+      if (this.workerStatus === null) return "Buscando...";
+      if (this.workerStatus === false) return "Offline";
+      return this.workerStatus.runStatus === "running" ? "Buscando..." : "Pronto";
+    }
   },
   mounted() {
     void this.load();
+    void this.checkWorker();
+    this.workerTimer = window.setInterval(() => {
+      void this.checkWorker();
+    }, 5000);
   },
   beforeUnmount() {
     this.stopDiscoveryPolling();
+    if (this.workerTimer) {
+      window.clearInterval(this.workerTimer);
+    }
   },
   methods: {
     startDiscoveryPolling(campaignId: number) {
@@ -145,6 +191,14 @@ export default defineComponent({
     setDiscoveryLevel(id: number, value: string) {
       this.discoveryLevels[id] = discoveryLevels.includes(value as DiscoverySearchLevel) ? (value as DiscoverySearchLevel) : "quick";
     },
+    async checkWorker() {
+      const activeOrgId = authSession.state.user?.organizationId;
+      if (activeOrgId) {
+        this.workerStatus = await workerClient.syncWorkerSession(activeOrgId);
+      } else {
+        this.workerStatus = null;
+      }
+    },
     async discover(id: number, level: DiscoverySearchLevel = "quick") {
       if (this.isDiscovering(id)) return;
       this.discoveryLevels[id] = level;
@@ -152,11 +206,43 @@ export default defineComponent({
       this.startDiscoveryPolling(id);
       try {
         this.error = "";
+        const activeOrgId = authSession.state.user?.organizationId;
+        if (activeOrgId) {
+          this.workerStatus = await workerClient.syncWorkerSession(activeOrgId);
+        }
         const result = await api.discoverCampaign(id, level);
-        const target = result.meta?.targetFinalLeads ?? (level === "deep" ? 60 : level === "medium" ? 30 : level === "nano" ? 5 : 10);
-        this.lastResult = result.cancelled
-          ? `Descoberta ${level} interrompida: ${result.inserted}/${target} leads finais inseridos antes da parada.`
-          : `Descoberta ${level}: ${result.inserted}/${target} leads finais inseridos de ${result.reviewed} revisados.`;
+        
+        if (result && result.runId && result.commandToken) {
+          if (!this.workerStatus) {
+            throw new Error("Worker local não está conectado. Abra o aplicativo local do worker para executar a busca.");
+          }
+          try {
+            const fallbackLimit = level === "nano" ? 5 : level === "medium" ? 30 : level === "deep" ? 60 : 10;
+            await workerClient.startLocalRun(result.runId, result.commandToken, level, result.options?.limit || fallbackLimit, result.apiBaseUrl || "");
+          } catch (startError) {
+            // Avoid leaving a DB-backed run eternally queued as "Aguardando worker iniciar...".
+            await api.stopCampaignDiscovery(id).catch(() => undefined);
+            throw startError;
+          }
+          
+          // Poll until run completes or is stopped
+          await new Promise<void>((resolve) => {
+            const checkTimer = window.setInterval(async () => {
+              const status = await api.discoveryStatus(id);
+              if (!status || !status.running) {
+                window.clearInterval(checkTimer);
+                resolve();
+              }
+            }, 1500);
+          });
+          
+          this.lastResult = `Descoberta iniciada via Worker Local.`;
+        } else {
+          const target = result.meta?.targetFinalLeads ?? (level === "deep" ? 60 : level === "medium" ? 30 : level === "nano" ? 5 : 10);
+          this.lastResult = result.cancelled
+            ? `Descoberta ${level} interrompida: ${result.inserted}/${target} leads finais inseridos antes da parada.`
+            : `Descoberta ${level}: ${result.inserted}/${target} leads finais inseridos de ${result.reviewed} revisados.`;
+        }
         await this.load();
       } catch (error) {
         this.error = error instanceof Error ? error.message : "Falha ao executar descoberta";
@@ -169,6 +255,13 @@ export default defineComponent({
       try {
         this.error = "";
         const result = await api.stopCampaignDiscovery(id);
+        
+        try {
+          await workerClient.stopLocalRun(id);
+        } catch {
+          // ignore local stop failure
+        }
+
         this.lastResult = result.stopped
           ? "Automacao interrompida. O navegador usado pelo scraper foi fechado."
           : "Nenhuma automacao ativa para esta campanha.";

@@ -384,3 +384,72 @@ export interface GeneratedMessage {
   tone: string;
   createdAt: string;
 }
+
+export interface WorkerDevice {
+  id: number;
+  deviceId: string;
+  userId: number;
+  organizationId: number;
+  environment: "development" | "production";
+  appVersion: string;
+  hostname?: string | null;
+  status: "active" | "inactive" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkerSession {
+  id: number;
+  workerDeviceId: number;
+  accessTokenHash: string;
+  refreshTokenHash: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkerHeartbeat {
+  id: number;
+  workerDeviceId: number;
+  status: string;
+  cpuUsage?: number | null;
+  ramUsage?: number | null;
+  createdAt: string;
+}
+
+export interface DiscoveryRun {
+  id: number;
+  campaignId: number;
+  organizationId: number;
+  workerDeviceId?: number | null;
+  status: "queued" | "claimed" | "running" | "stopping" | "completed" | "cancelled" | "failed" | "expired";
+  level: "nano" | "quick" | "medium" | "deep";
+  options?: any;
+  error?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DiscoveryRunEvent {
+  id: number;
+  runId: number;
+  sequence: number;
+  kind: string;
+  title: string;
+  leadName?: string | null;
+  url?: string | null;
+  payload: any;
+  createdAt: string;
+}
+
+export interface DiscoveryRunArtifact {
+  id: number;
+  runId: number;
+  type: string;
+  path: string;
+  uploadId?: string | null;
+  createdAt: string;
+}
+

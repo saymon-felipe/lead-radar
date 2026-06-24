@@ -1,8 +1,25 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { HttpError } from "../../shared/errors/http-error.js";
-import { store } from "../../shared/store/memory-store.js";
-import { discoverCampaign, getCampaignDiscoveryStatus, reviewSearchCandidates, stopCampaignDiscovery } from "./discovery.service.js";
+import { prisma } from "../../shared/prisma.js";
+import { requireAuthContext } from "../../shared/auth/guard.js";
+import { serializeCampaign, serializeDiscoveryCandidate } from "../../shared/http/serializers.js";
+import { discoverCampaign, reviewSearchCandidates } from "./discovery.service.js";
+import {
+  createDiscoveryRun,
+  stopDiscoveryRun,
+  getDiscoveryRunStatus
+} from "./discovery-orchestrator.service.js";
+
+function defaultDiscoveryTarget(level: "nano" | "quick" | "medium" | "deep"): number {
+  switch (level) {
+    case "nano": return 5;
+    case "medium": return 30;
+    case "deep": return 60;
+    case "quick":
+    default: return 10;
+  }
+}
 
 const reviewPayload = z.object({
   campaignId: z.number().int().positive(),
@@ -21,40 +38,85 @@ export async function discoveryRoutes(app: FastifyInstance) {
       level: z.enum(["nano", "quick", "medium", "deep"]).default("quick"),
       limit: z.coerce.number().int().min(1).max(60).optional()
     }).parse(request.query);
-    const campaign = store.campaigns.get(id);
-    if (!campaign) throw new HttpError(404, "Campanha não encontrada");
-    return discoverCampaign(campaign, { level: query.level, targetFinalLeads: query.limit });
+
+    const { organizationId } = requireAuthContext(request);
+    const campaignRecord = await prisma.searchCampaign.findFirst({ where: { id, organizationId } });
+    if (!campaignRecord) throw new HttpError(404, "Campanha não encontrada");
+
+    const campaign = serializeCampaign(campaignRecord) as any;
+
+    const mode = process.env.DISCOVERY_EXECUTION_MODE || "legacy";
+    const targetFinalLeads = query.level === "nano" ? 5 : query.limit ?? defaultDiscoveryTarget(query.level);
+    if (mode === "worker") {
+      return createDiscoveryRun(id, query.level, targetFinalLeads);
+    }
+
+    return discoverCampaign(campaign, { level: query.level, targetFinalLeads });
   });
 
   app.post("/api/campaigns/:id/discover/stop", async (request) => {
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.campaigns.has(id)) throw new HttpError(404, "Campanha não encontrada");
-    return stopCampaignDiscovery(id);
+    
+    const { organizationId } = requireAuthContext(request);
+    const campaignExists = await prisma.searchCampaign.findFirst({ where: { id, organizationId } });
+    if (!campaignExists) throw new HttpError(404, "Campanha não encontrada");
+
+    const mode = process.env.DISCOVERY_EXECUTION_MODE || "legacy";
+    if (mode === "worker") {
+      return stopDiscoveryRun(id);
+    }
+
+    return stopDiscoveryRun(id);
   });
 
   app.post("/api/discovery/review-candidates", async (request) => {
     const payload = reviewPayload.parse(request.body);
-    const campaign = store.campaigns.get(payload.campaignId);
-    if (!campaign) throw new HttpError(404, "Campanha não encontrada");
+    
+    const { organizationId } = requireAuthContext(request);
+    const campaignRecord = await prisma.searchCampaign.findFirst({ 
+      where: { id: payload.campaignId, organizationId } 
+    });
+    if (!campaignRecord) throw new HttpError(404, "Campanha não encontrada");
+    
+    const campaign = serializeCampaign(campaignRecord) as any;
     return reviewSearchCandidates(campaign, payload.candidates);
   });
 
   app.post("/api/ai/review-search-candidates", async (request) => {
     const payload = reviewPayload.parse(request.body);
-    const campaign = store.campaigns.get(payload.campaignId);
-    if (!campaign) throw new HttpError(404, "Campanha não encontrada");
+    
+    const { organizationId } = requireAuthContext(request);
+    const campaignRecord = await prisma.searchCampaign.findFirst({ 
+      where: { id: payload.campaignId, organizationId } 
+    });
+    if (!campaignRecord) throw new HttpError(404, "Campanha não encontrada");
+    
+    const campaign = serializeCampaign(campaignRecord) as any;
     return reviewSearchCandidates(campaign, payload.candidates);
   });
 
   app.get("/api/campaigns/:id/discovery-candidates", async (request) => {
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.campaigns.has(id)) throw new HttpError(404, "Campanha não encontrada");
-    return Array.from(store.discoveryCandidates.values()).filter((candidate) => candidate.campaignId === id);
+    
+    const { organizationId } = requireAuthContext(request);
+    const campaignExists = await prisma.searchCampaign.findFirst({ where: { id, organizationId } });
+    if (!campaignExists) throw new HttpError(404, "Campanha não encontrada");
+
+    const candidates = await prisma.discoveryCandidate.findMany({
+      where: { campaignId: id, organizationId }
+    });
+
+    return candidates.map(serializeDiscoveryCandidate);
   });
 
   app.get("/api/campaigns/:id/discovery-status", async (request) => {
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
-    if (!store.campaigns.has(id)) throw new HttpError(404, "Campanha não encontrada");
-    return getCampaignDiscoveryStatus(id);
+    
+    const { organizationId } = requireAuthContext(request);
+    const campaignExists = await prisma.searchCampaign.findFirst({ where: { id, organizationId } });
+    if (!campaignExists) throw new HttpError(404, "Campanha não encontrada");
+
+    return getDiscoveryRunStatus(id);
   });
 }
+

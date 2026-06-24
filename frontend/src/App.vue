@@ -119,6 +119,7 @@ import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { authSession } from "./services/session";
 import { api, type UserOrganization } from "./services/api";
+import { workerClient } from "./services/workerClient";
 
 const route = useRoute();
 
@@ -160,12 +161,27 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
+let workerTimer: number | undefined;
+
 onMounted(() => {
   document.addEventListener("click", handleClickOutside);
+
+  const syncWorker = async () => {
+    const orgId = authSession.state.user?.organizationId;
+    if (orgId) {
+      await workerClient.syncWorkerSession(orgId);
+    }
+  };
+
+  void syncWorker();
+  workerTimer = window.setInterval(syncWorker, 10000);
 });
 
 onUnmounted(() => {
   document.removeEventListener("click", handleClickOutside);
+  if (workerTimer) {
+    window.clearInterval(workerTimer);
+  }
 });
 
 async function selectOrganization(orgId: number) {

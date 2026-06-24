@@ -1,0 +1,28 @@
+{
+  "name": "lead-radar-worker",
+  "version": "0.1.0",
+  "description": "Local worker for Lead Radar, performing background scraping via Playwright",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "electron dist/main.js",
+    "dev": "concurrently \"tsc -w\" \"electron dist/main.js\"",
+    "dev:ts": "ts-node main.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "playwright": "^1.49.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "concurrently": "^10.0.3",
+    "typescript": "^5.7.2",
+    "@types/node": "^20.11.0",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17"
+  }
+}

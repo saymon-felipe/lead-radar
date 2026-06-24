@@ -47,3 +47,72 @@ tr:hover td {
   flex-wrap: wrap;
   gap: 10px;
 }
+
+/* Campaign Grid Specific Layouts */
+.campaign-grid__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.campaign-grid__header h2 {
+  margin-bottom: 0 !important;
+}
+
+.campaign-grid__bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(14, 165, 233, 0.05);
+  border: 1px solid rgba(14, 165, 233, 0.15);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+}
+
+.campaign-grid__selected-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #38bdf8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campaign-grid__divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 4px;
+}
+
+.campaign-grid__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.campaign-grid__level {
+  min-height: 32px !important;
+  height: 32px !important;
+  padding: 4px 24px 4px 8px !important;
+  font-size: 13px !important;
+  width: auto !important;
+}
+
+/* Lead Grid Links */
+.lead-grid__link {
+  text-decoration: none !important;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color var(--transition-fast);
+}
+
+.lead-grid__link:hover {
+  color: #38bdf8 !important;
+}

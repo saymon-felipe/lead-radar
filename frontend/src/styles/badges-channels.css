@@ -53,6 +53,7 @@
   font-size: 12px;
   gap: 6px;
   padding: 4px 8px;
+  text-decoration: none;
   transition: all var(--transition-fast);
 }
 

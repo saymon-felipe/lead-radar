@@ -299,3 +299,19 @@
   background: rgba(239, 68, 68, 0.08);
   color: var(--accent-red);
 }
+
+/* Page action buttons grouping */
+.lead-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Tabs Navigation Layout */
+.tabs-navigation {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 24px;
+  padding-bottom: 0;
+}

@@ -1,4 +1,4 @@
-﻿/* Form Controls & Styling */
+/* Form Controls & Styling */
 button {
   align-items: center;
   background: linear-gradient(135deg, var(--primary), #0369a1);
@@ -104,5 +104,25 @@ label {
   gap: 6px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+
+/* Standard Form Layouts */
+form:not(.auth-form) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+form:not(.auth-form) > button,
+form:not(.auth-form) button[type="submit"] {
+  align-self: flex-start;
+}
+
+/* Compact elements */
+button.compact {
+  min-height: 32px !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  font-size: 13px !important;
 }
 

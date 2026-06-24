@@ -191,7 +191,7 @@ export default defineComponent({
   gap: 8px;
   font-size: 14px;
   font-weight: 700;
-  margin-bottom: -13px;
+  margin-bottom: -1px;
   padding: 10px 20px;
   transition: all var(--transition-fast);
 }

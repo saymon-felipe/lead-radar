@@ -1,4 +1,4 @@
-﻿/* Helpers */
+/* Helpers */
 .muted { color: var(--text-muted); }
 .error { color: var(--accent-hot); font-size: 13px; font-weight: 600; }
 .text-highlight { color: var(--text-highlight); }
@@ -23,3 +23,23 @@ tr.row-selected td {
   border-bottom-color: rgba(14, 165, 233, 0.2) !important;
   color: var(--text-highlight) !important;
 }
+
+/* Text Truncation Utilities */
+.text-truncate-lead {
+  display: inline-block;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.text-truncate-campaign {
+  display: inline-block;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+

@@ -65,3 +65,33 @@ defineProps<{
 }>();
 </script>
 
+<style scoped>
+.lead-filters {
+  background: rgba(20, 28, 47, 0.45);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.lead-filters h2 {
+  font-size: 0.95rem;
+  margin-bottom: 1.25rem;
+  font-weight: 700;
+  color: var(--text-highlight);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  padding-bottom: 0.5rem;
+}
+
+.lead-filters__toolbar {
+  gap: 14px;
+}
+
+.lead-filters__toolbar button {
+  background: linear-gradient(135deg, var(--primary), #0284c7);
+  font-weight: 700;
+  transition: all var(--transition-fast);
+}
+
+.lead-filters__toolbar button:hover {
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+}
+</style>
+

@@ -2,20 +2,22 @@
   <section class="fade-in-up">
     <header class="page-header lead-details__header">
       <div>
-        <p class="topbar-kicker"><i class="ri-arrow-right-line"></i> Painel de Prospeccao</p>
+        <p class="topbar-kicker"><i class="ri-arrow-right-line"></i> Painel de Prospecção</p>
         <h1>{{ lead?.businessName ?? "Carregando Lead..." }}</h1>
         <p v-if="lead" class="muted">
           <i class="ri-briefcase-line"></i> {{ lead.niche }} em <i class="ri-map-pin-line"></i> {{ lead.city }}/{{ lead.state }}
         </p>
       </div>
       <div class="actions lead-details__actions">
-        <button class="secondary" @click="$router.back()"><i class="ri-arrow-left-line"></i> Voltar</button>
-        <button class="secondary" @click="scoreLead" title="Recalcular pontuacao comercial"><i class="ri-refresh-line"></i> Recalcular Score</button>
-        <button class="secondary" @click="analyzeWebsite" title="Disparar robo de analise de conteudo do site"><i class="ri-global-line"></i> Analisar Site</button>
-        <button class="secondary" @click="analyzeSocial" title="Disparar robo de analise de rede social do lead"><i class="ri-instagram-line"></i> Analisar Social</button>
-        <button class="secondary" @click="rebuildEmbeddings" title="Recalcular vetores de similaridade IA"><i class="ri-brain-line"></i> Embeddings</button>
-        <button @click="reviewLead" title="Gerar parecer tecnico da IA sobre o negocio"><i class="ri-magic-line"></i> Analise IA</button>
-        <button @click="generateMessage" title="Gerar mensagens sugestivas personalizadas para abordagem"><i class="ri-message-2-line"></i> Gerar Abordagem</button>
+        <button class="secondary compact" @click="$router.back()"><i class="ri-arrow-left-line"></i> Voltar</button>
+        <div class="lead-details__action-group">
+          <button class="secondary compact" @click="scoreLead" title="Recalcular pontuação comercial"><i class="ri-refresh-line"></i> Score</button>
+          <button class="secondary compact" @click="analyzeWebsite" title="Disparar robô de análise de conteúdo do site"><i class="ri-global-line"></i> Site</button>
+          <button class="secondary compact" @click="analyzeSocial" title="Disparar robô de análise de rede social do lead"><i class="ri-instagram-line"></i> Social</button>
+          <button class="secondary compact" @click="rebuildEmbeddings" title="Recalcular vetores de similaridade IA"><i class="ri-brain-line"></i> Embeddings</button>
+        </div>
+        <button class="primary" @click="reviewLead" title="Gerar parecer técnico da IA sobre o negócio"><i class="ri-magic-line"></i> Analise IA</button>
+        <button class="primary" @click="generateMessage" title="Gerar mensagens sugestivas personalizadas para abordagem"><i class="ri-message-2-line"></i> Gerar Abordagem</button>
       </div>
     </header>
 
@@ -90,10 +92,10 @@ export default defineComponent({
   data() {
     return {
       tabs: [
-        { value: "overview", label: "Visao Geral & CRM", icon: "ri-user-shared-line", title: "Visualizar dados do lead e registrar historico no CRM" },
-        { value: "presence", label: "Presenca Digital", icon: "ri-global-line", title: "Visualizar sinais coletados do website e redes sociais" },
-        { value: "sales_ia", label: "Abordagem & Similaridade", icon: "ri-message-3-line", title: "Visualizar sugestoes de mensagens de vendas e similaridade IA" },
-        { value: "logs", label: "Logs da IA", icon: "ri-code-box-line", title: "Visualizar logs de analise estruturada da IA" }
+        { value: "overview", label: "Visão Geral & CRM", icon: "ri-user-shared-line", title: "Visualizar dados do lead e registrar histórico no CRM" },
+        { value: "presence", label: "Presença Digital", icon: "ri-global-line", title: "Visualizar sinais coletados do website e redes sociais" },
+        { value: "sales_ia", label: "Abordagem & Similaridade", icon: "ri-message-3-line", title: "Visualizar sugestões de mensagens de vendas e similaridade IA" },
+        { value: "logs", label: "Logs da IA", icon: "ri-code-box-line", title: "Visualizar logs de análise estruturada da IA" }
       ] as Array<{ value: LeadDetailsTab; label: string; icon: string; title: string }>,
       activeTab: "overview" as LeadDetailsTab,
       lead: undefined as Lead | undefined,
@@ -132,7 +134,7 @@ export default defineComponent({
       await this.runLeadTask(() => api.rebuildLeadEmbeddings(this.leadId()), "Falha ao gerar embeddings");
     },
     async reviewLead() {
-      await this.runLeadTask(() => api.reviewLead(this.leadId()), "Falha na analise IA");
+      await this.runLeadTask(() => api.reviewLead(this.leadId()), "Falha na análise IA");
     },
     async generateMessage() {
       await this.runLeadTask(() => api.generateMessage(this.leadId()), "Falha ao gerar mensagem");
@@ -220,5 +222,40 @@ export default defineComponent({
 .tab-leave-to {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+.lead-details__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lead-details__action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-right: 1px solid var(--border-color);
+  padding-right: 10px;
+  margin-right: 2px;
+}
+
+@media (max-width: 768px) {
+  .lead-details__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .lead-details__action-group {
+    border-right: none;
+    padding-right: 0;
+    margin-right: 0;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  .lead-details__action-group button {
+    flex: 1;
+    min-width: calc(50% - 6px);
+  }
 }
 </style>

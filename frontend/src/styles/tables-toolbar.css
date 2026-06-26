@@ -105,6 +105,7 @@ tr:hover td {
 
 /* Lead Grid Links */
 .lead-grid__link {
+  color: #38bdf8 !important;
   text-decoration: none !important;
   font-weight: 700;
   display: inline-flex;
@@ -114,5 +115,5 @@ tr:hover td {
 }
 
 .lead-grid__link:hover {
-  color: #38bdf8 !important;
+  color: #7dd3fc !important;
 }

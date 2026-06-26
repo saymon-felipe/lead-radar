@@ -5,6 +5,9 @@ import { requireAuthContext, requireRole } from "../../shared/auth/guard.js";
 import { HttpError } from "../../shared/errors/http-error.js";
 import { serializeCampaign } from "../../shared/http/serializers.js";
 import type { CampaignStatus } from "../../shared/types.js";
+import { attachCampaignDiscoveryLevels, setCampaignDiscoveryLevel } from "./discovery-level.store.js";
+
+const discoveryLevelSchema = z.enum(["nano", "quick", "medium", "deep"]);
 
 const campaignPayload = z.object({
   name: z.string().min(1),
@@ -13,7 +16,19 @@ const campaignPayload = z.object({
   state: z.string().min(1),
   country: z.string().default("BR"),
   status: z.enum(["draft", "running", "paused", "completed", "failed"]).default("draft"),
-  targetQuantity: z.number().int().positive().optional()
+  targetQuantity: z.number().int().positive().optional(),
+  discoveryLevel: discoveryLevelSchema.default("quick")
+});
+
+const campaignUpdatePayload = z.object({
+  name: z.string().min(1).optional(),
+  niche: z.string().min(1).optional(),
+  city: z.string().min(1).optional(),
+  state: z.string().min(1).optional(),
+  country: z.string().optional(),
+  status: z.enum(["draft", "running", "paused", "completed", "failed"]).optional(),
+  targetQuantity: z.number().int().positive().optional(),
+  discoveryLevel: discoveryLevelSchema.optional()
 });
 
 async function campaignMetrics(organizationId: number, campaignId: number) {
@@ -44,8 +59,10 @@ export async function campaignRoutes(app: FastifyInstance) {
       orderBy: { createdAt: "desc" }
     });
 
+    const campaignsWithLevels = await attachCampaignDiscoveryLevels(campaigns);
+
     return Promise.all(
-      campaigns.map(async (campaign) => ({
+      campaignsWithLevels.map(async (campaign) => ({
         ...serializeCampaign(campaign),
         metrics: await campaignMetrics(organizationId, campaign.id)
       }))
@@ -55,34 +72,47 @@ export async function campaignRoutes(app: FastifyInstance) {
   app.post("/api/campaigns", async (request, reply) => {
     const context = requireRole(request, "operator");
     const payload = campaignPayload.parse(request.body);
+    const { discoveryLevel, ...campaignData } = payload;
     const campaign = await prisma.searchCampaign.create({
       data: {
         organizationId: context.organizationId,
         createdBy: context.userId,
-        ...payload
+        ...campaignData
       }
     });
+    const savedLevel = await setCampaignDiscoveryLevel(campaign.id, discoveryLevel);
     reply.code(201);
-    return serializeCampaign(campaign);
+    return serializeCampaign({ ...campaign, discoveryLevel: savedLevel });
   });
 
   app.get("/api/campaigns/:id", async (request) => {
     const { organizationId } = requireAuthContext(request);
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
     const campaign = await findCampaign(organizationId, id);
-    return { ...serializeCampaign(campaign), metrics: await campaignMetrics(organizationId, campaign.id) };
+    const [campaignWithLevel] = await attachCampaignDiscoveryLevels([campaign]);
+    return { ...serializeCampaign(campaignWithLevel), metrics: await campaignMetrics(organizationId, campaign.id) };
   });
 
   app.put("/api/campaigns/:id", async (request) => {
     const { organizationId } = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
     await findCampaign(organizationId, id);
-    const payload = campaignPayload.partial().parse(request.body);
-    const updated = await prisma.searchCampaign.update({
-      where: { id },
-      data: payload
-    });
-    return serializeCampaign(updated);
+    const payload = campaignUpdatePayload.parse(request.body);
+    const { discoveryLevel, ...campaignData } = payload;
+
+    const hasCampaignData = Object.keys(campaignData).length > 0;
+    const updated = hasCampaignData
+      ? await prisma.searchCampaign.update({
+          where: { id },
+          data: campaignData
+        })
+      : await findCampaign(organizationId, id);
+
+    const savedLevel = discoveryLevel !== undefined
+      ? await setCampaignDiscoveryLevel(id, discoveryLevel)
+      : (await attachCampaignDiscoveryLevels([updated]))[0].discoveryLevel;
+
+    return serializeCampaign({ ...updated, discoveryLevel: savedLevel });
   });
 
   app.delete("/api/campaigns/:id", async (request, reply) => {
@@ -110,7 +140,8 @@ export async function campaignRoutes(app: FastifyInstance) {
           finishedAt: status === "completed" ? new Date() : current.finishedAt
         }
       });
-      return serializeCampaign(updated);
+      const [updatedWithLevel] = await attachCampaignDiscoveryLevels([updated]);
+      return serializeCampaign(updatedWithLevel);
     });
   }
 }

@@ -6,22 +6,17 @@ import { bearerTokenFromAuthorizationHeader } from "../../shared/auth/jwt.js";
 import {
   registerWorkerDevice,
   createWorkerSession,
-  refreshWorkerSession,
   authenticateWorkerToken,
   recordHeartbeat,
   claimDiscoveryRun,
   postRunEvent,
   postRunCandidate,
+  postRunLead,
   postWebsiteSnapshot,
   postSocialSnapshot,
-  postRunLead,
   completeDiscoveryRun,
   failDiscoveryRun
 } from "./worker.service.js";
-
-function workerApiBaseUrl(): string {
-  return process.env.API_BASE_URL || `http://localhost:${process.env.PORT ?? "3333"}`;
-}
 
 async function requireWorkerDevice(request: any) {
   const token = bearerTokenFromAuthorizationHeader(request.headers.authorization);
@@ -68,7 +63,7 @@ export async function workerRoutes(app: FastifyInstance) {
       workerToken: session.accessToken,
       refreshToken: session.refreshToken,
       expiresAt: session.expiresAt,
-      apiBaseUrl: workerApiBaseUrl()
+      apiBaseUrl: process.env.API_BASE_URL || "http://localhost:3334"
     };
   });
 
@@ -95,20 +90,7 @@ export async function workerRoutes(app: FastifyInstance) {
     };
   });
 
-  // 3. Refresh worker token (Called by worker)
-  app.post("/api/workers/refresh", async (request) => {
-    const payload = z.object({ refreshToken: z.string().min(1) }).parse(request.body);
-    const session = await refreshWorkerSession(payload.refreshToken);
-    return {
-      success: true,
-      workerToken: session.accessToken,
-      refreshToken: session.refreshToken,
-      expiresAt: session.expiresAt,
-      apiBaseUrl: workerApiBaseUrl()
-    };
-  });
-
-  // 4. Heartbeat (Called by worker)
+  // 3. Heartbeat (Called by worker)
   app.post("/api/workers/heartbeat", async (request) => {
     const device = await requireWorkerDevice(request);
     const payload = z.object({
@@ -155,7 +137,7 @@ export async function workerRoutes(app: FastifyInstance) {
     await requireWorkerDevice(request);
     const { runId } = z.object({ runId: z.coerce.number().int() }).parse(request.params);
     const payload = z.object({
-      sequence: z.number().int(),
+      sequence: z.number().int().optional(),
       kind: z.string(),
       title: z.string(),
       leadName: z.string().optional(),
@@ -192,7 +174,45 @@ export async function workerRoutes(app: FastifyInstance) {
     return { success: true, candidateId: candidate.id };
   });
 
-  // 7. Ingest website snapshot (Called by worker)
+  // 7. Ingest validated leads (Called by worker)
+  app.post("/api/workers/runs/:runId/leads", async (request) => {
+    await requireWorkerDevice(request);
+    const { runId } = z.object({ runId: z.coerce.number().int() }).parse(request.params);
+    const payload = z.object({
+      externalId: z.string(),
+      name: z.string(),
+      personName: z.string().optional(),
+      niche: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      country: z.string().optional(),
+      phone: z.string().optional(),
+      whatsapp: z.string().optional(),
+      email: z.string().optional(),
+      websiteUrl: z.string().optional(),
+      instagramUrl: z.string().optional(),
+      sourceUrl: z.string().optional(),
+      source: z.string().optional(),
+      professionalRegistry: z.string().optional(),
+      address: z.string().optional(),
+      rawData: z.any().optional()
+    }).parse(request.body);
+
+    const result = await postRunLead(runId, payload);
+    return {
+      success: true,
+      leadId: result.lead.id,
+      score: result.score,
+      created: result.created,
+      duplicate: result.duplicate,
+      insertedCount: result.insertedCount,
+      updatedCount: result.updatedCount,
+      acceptedCount: result.acceptedCount,
+      target: result.target
+    };
+  });
+
+  // 8. Ingest website snapshot (Called by worker)
   app.post("/api/workers/runs/:runId/snapshots/website", async (request) => {
     await requireWorkerDevice(request);
     const { runId } = z.object({ runId: z.coerce.number().int() }).parse(request.params);
@@ -217,7 +237,7 @@ export async function workerRoutes(app: FastifyInstance) {
     return { success: true, snapshotId: snapshot.id };
   });
 
-  // 8. Ingest social snapshot (Called by worker)
+  // 9. Ingest social snapshot (Called by worker)
   app.post("/api/workers/runs/:runId/snapshots/social", async (request) => {
     await requireWorkerDevice(request);
     const { runId } = z.object({ runId: z.coerce.number().int() }).parse(request.params);
@@ -238,48 +258,6 @@ export async function workerRoutes(app: FastifyInstance) {
 
     const snapshot = await postSocialSnapshot(runId, payload);
     return { success: true, snapshotId: snapshot.id };
-  });
-
-  // 9. Ingest validated lead (Called by worker after local enrichment)
-  app.post("/api/workers/runs/:runId/leads", async (request) => {
-    await requireWorkerDevice(request);
-    const { runId } = z.object({ runId: z.coerce.number().int() }).parse(request.params);
-    const payload = z.object({
-      externalId: z.string(),
-      name: z.string().min(2),
-      personName: z.string().optional(),
-      niche: z.string().optional(),
-      city: z.string().optional(),
-      state: z.string().optional(),
-      country: z.string().optional(),
-      phone: z.string().optional(),
-      whatsapp: z.string().optional(),
-      email: z.string().optional(),
-      websiteUrl: z.string().optional(),
-      instagramUrl: z.string().optional(),
-      sourceUrl: z.string().optional(),
-      source: z.string().optional(),
-      professionalRegistry: z.string().optional(),
-      address: z.string().optional(),
-      rawData: z.any().optional()
-    }).parse(request.body);
-
-    const result = await postRunLead(runId, payload);
-    return {
-      success: true,
-      leadId: result.lead.id,
-      created: result.created,
-      duplicate: result.duplicate,
-      insertedCount: result.insertedCount,
-      updatedCount: result.updatedCount,
-      acceptedCount: result.acceptedCount,
-      target: result.target,
-      score: {
-        finalScore: result.score.finalScore,
-        temperature: result.score.temperature,
-        recommendedOffer: result.score.recommendedOffer
-      }
-    };
   });
 
   // 10. Complete Discovery Run (Called by worker)

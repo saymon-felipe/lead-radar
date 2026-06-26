@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "setup:local-ai": "tsx scripts/setup-local-ai.ts",
     "start": "electron dist/main.js",
     "dev": "concurrently \"tsc -w\" \"electron dist/main.js\"",
     "dev:ts": "ts-node main.ts"

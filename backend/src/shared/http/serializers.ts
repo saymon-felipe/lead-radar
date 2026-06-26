@@ -35,6 +35,7 @@ export function serializeCampaign(record: any) {
     country: record.country,
     status: record.status,
     targetQuantity: record.targetQuantity ?? undefined,
+    discoveryLevel: record.discoveryLevel ?? "quick",
     startedAt: toIso(record.startedAt),
     finishedAt: toIso(record.finishedAt),
     createdAt: toIso(record.createdAt),

@@ -38,12 +38,13 @@ await app.register(cors, {
 
 await app.register(registerAppRoutes);
 
-app.setErrorHandler((error, _request, reply) => {
-  if (error instanceof ZodError) {
+app.setErrorHandler((error: any, _request, reply) => {
+  if (error instanceof ZodError || error?.name === "ZodError" || Array.isArray(error?.issues)) {
+    const zodError = error instanceof ZodError ? error : new ZodError(error.issues ?? []);
     reply.status(400).send({
       error: "ValidationError",
       message: "Payload da requisição inválido",
-      details: error.flatten()
+      details: zodError.flatten()
     });
     return;
   }

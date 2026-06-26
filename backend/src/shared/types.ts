@@ -1,4 +1,5 @@
 export type CampaignStatus = "draft" | "running" | "paused" | "completed" | "failed";
+export type DiscoverySearchLevel = "nano" | "quick" | "medium" | "deep";
 export type Temperature = "hot" | "warm" | "medium" | "cold" | "discard";
 export type UserRole = "admin" | "manager" | "operator" | "viewer";
 export type RecommendedOffer =
@@ -32,6 +33,7 @@ export interface Campaign {
   country: string;
   status: CampaignStatus;
   targetQuantity?: number;
+  discoveryLevel?: DiscoverySearchLevel;
   startedAt?: string;
   finishedAt?: string;
   createdAt: string;

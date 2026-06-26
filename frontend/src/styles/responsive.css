@@ -117,5 +117,14 @@
       opacity: 1;
     }
   }
+
+  /* Discovery Monitor Adaptations */
+  .monitor-panels-row {
+    grid-template-columns: 1fr !important;
+  }
+  .discovery-monitor__metrics {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
 }
+
 

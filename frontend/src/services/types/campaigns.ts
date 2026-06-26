@@ -1,3 +1,5 @@
+import type { DiscoverySearchLevel } from "./discovery";
+
 export interface Campaign {
   id: number;
   name: string;
@@ -6,6 +8,7 @@ export interface Campaign {
   state: string;
   status: string;
   targetQuantity?: number;
+  discoveryLevel?: DiscoverySearchLevel;
   metrics?: {
     leadsFound: number;
     hotLeads: number;

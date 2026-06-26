@@ -100,6 +100,7 @@ model SearchCampaign {
   country             String               @default("BR")
   status              CampaignStatus       @default(draft)
   targetQuantity      Int?                 @map("target_quantity")
+  discoveryLevel      String               @default("quick") @map("discovery_level")
   startedAt           DateTime?            @map("started_at")
   finishedAt          DateTime?            @map("finished_at")
   createdBy           Int?                 @map("created_by")

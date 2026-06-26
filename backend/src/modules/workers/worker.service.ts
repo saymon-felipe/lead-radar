@@ -1,4 +1,5 @@
 import { randomBytes, createHash } from "node:crypto";
+import OpenAI from "openai";
 import { prisma } from "../../shared/prisma.js";
 import { HttpError } from "../../shared/errors/http-error.js";
 import { createOrUpdateObjectiveScore } from "../scoring/scoring.service.js";
@@ -29,8 +30,10 @@ function normalizeUrl(raw?: string | null): string | null {
 }
 
 const WORKER_WEBSITE_BLOCKED_HOST_PARTS = [
-  "doctoralia", "mundopsicologos", "guiamais", "guiafacil", "listamais", "empresafone",
-  "todosnegocios", "yelp", "telelistas", "acheioprofissional", "brfirmas", "cnpj",
+  "doctoralia", "mundopsicologos", "redepsicologos", "guiamais", "guiafacil", "listamais", "empresafone",
+  "todosnegocios", "yelp", "telelistas", "acheioprofissional", "brfirmas", "cnpj", "centralterapia",
+  "facilconsulta", "locaisdobrasil", "locaisbrasil", "eguias", "guiatelefone", "qualotelefone",
+  "euterapeuta", "benditoguia", "saudecidade", "onvita", "brasillocais", "psicologas.biz",
   "instagram", "facebook", "linkedin", "youtube", "tiktok", "x.com", "twitter"
 ];
 
@@ -81,7 +84,10 @@ const WORKER_EMAIL_BLOCKED_LOCAL_PARTS = new Set([
 const WORKER_EMAIL_PLATFORM_DOMAINS = [
   "listamais.com.br", "doctoralia.com.br", "mundopsicologos.com", "mundopsicologos.com.br",
   "empresafone.com.br", "guiafacil.com", "guiamais.com.br", "todosnegocios.com",
-  "acheioprofissional.com.br", "brfirmas.org", "yelp.com", "instagram.com", "facebook.com",
+  "acheioprofissional.com.br", "redepsicologos.com.br", "centralterapia.com.br",
+  "facilconsulta.com.br", "locaisdobrasil.com.br", "locaisbrasil.com.br", "eguias.net",
+  "brfirmas.org", "yelp.com", "euterapeuta.com.br", "benditoguia.com.br", "saudecidade.com",
+  "onvita.com.br", "brasillocais.com", "instagram.com", "facebook.com",
   "meta.com", "google.com", "cloudflare.com", "sentry.io", "schema.org"
 ];
 
@@ -114,6 +120,236 @@ function evidenceMatchesName(evidence: string, name: string): boolean {
   return matches >= Math.min(2, tokens.length);
 }
 
+const WORKER_ENTITY_NAME_TERMS = [
+  "rede psicologos", "redepsicologos", "central terapia", "centralterapia",
+  "facil consulta", "facilconsulta", "locais brasil", "locais do brasil", "locaisbrasil",
+  "lista mais", "listamais", "os mais recomendados", "mais recomendados",
+  "doctoralia", "mundo psicologos", "mundopsicologos", "achei profissional", "acheioprofissional",
+  "guia telefone", "guiatelefone", "guia facil", "guiafacil", "eguias", "e guias",
+  "analise do comportamento", "analise comportamento", "análise do comportamento",
+  "clinica", "clínica", "instituto", "centro", "espaco", "espaço", "associacao", "associação",
+  "terapia", "psicologia", "psicologos", "psicólogos", "profissionais", "recomendados", "melhores"
+];
+
+function looksLikeWorkerEntityName(raw: string): boolean {
+  const normalized = normalizeForCompare(raw);
+  if (!normalized) return true;
+  return WORKER_ENTITY_NAME_TERMS.some((term) => normalized.includes(normalizeForCompare(term)));
+}
+
+function isWorkerIndividualProfessionalName(raw: string): boolean {
+  const normalized = normalizeForCompare(raw);
+  if (!normalized || normalized.length < 5 || normalized.length > 80) return false;
+  if (looksLikeWorkerEntityName(raw)) return false;
+  if (/\b(rua|avenida|av|bairro|centro|londrina|curitiba|sao paulo|cristo rei|batel|bigorrilho|como chegar|ver telefone|solicitar exclusao|agendar|endereco|endereço|unidade)\b/i.test(normalized)) return false;
+  const tokens = normalized.split(" ").filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 6) return false;
+  if (tokens.some((token) => ["rede", "central", "lista", "guia", "clinica", "instituto", "centro", "terapia", "psicologia", "psicologos", "recomendados", "melhores"].includes(token))) return false;
+  return professionalNameTokens(raw).length >= 2;
+}
+
+function expectedDddsForCampaign(city?: string | null, state?: string | null): string[] {
+  const key = normalizeForCompare(city || "");
+  const cityDdds: Record<string, string[]> = {
+    londrina: ["43"],
+    cambe: ["43"],
+    cambé: ["43"],
+    curitiba: ["41"],
+    maringa: ["44"],
+    maringá: ["44"]
+  };
+  return cityDdds[key] ?? [];
+}
+
+function phoneDdd(phone?: string | null): string | null {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+  const national = normalized.startsWith("55") ? normalized.slice(2) : normalized;
+  return national.slice(0, 2);
+}
+
+function phoneMatchesCampaignDdd(phone: string | null | undefined, city?: string | null, state?: string | null): boolean {
+  const expected = expectedDddsForCampaign(city, state);
+  if (!expected.length) return true;
+  const ddd = phoneDdd(phone);
+  return Boolean(ddd && expected.includes(ddd));
+}
+
+type AiDddValidation = {
+  valid: boolean;
+  confidence: number;
+  reasonCode: "exact_city" | "metro_region" | "same_state_not_city" | "invalid" | "unknown" | "fallback_exact" | "fallback_unknown" | "ai_unavailable" | "ai_error";
+  canonicalDdds: string[];
+  ddd: string | null;
+  source: "ai" | "deterministic";
+  model?: string;
+  error?: string;
+};
+
+function safeJsonParse<T>(raw: string | null | undefined): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]) as T;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function dddFallbackValidation(phone: string | null | undefined, city?: string | null, state?: string | null, reasonCode: AiDddValidation["reasonCode"] = "fallback_exact"): AiDddValidation {
+  const ddd = phoneDdd(phone);
+  const expected = expectedDddsForCampaign(city, state);
+  if (!ddd) {
+    return { valid: false, confidence: 0, reasonCode: "invalid", canonicalDdds: expected, ddd: null, source: "deterministic" };
+  }
+  if (!expected.length) {
+    return { valid: true, confidence: 0.45, reasonCode: "fallback_unknown", canonicalDdds: [], ddd, source: "deterministic" };
+  }
+  return {
+    valid: expected.includes(ddd),
+    confidence: expected.includes(ddd) ? 0.9 : 0.9,
+    reasonCode,
+    canonicalDdds: expected,
+    ddd,
+    source: "deterministic"
+  };
+}
+
+async function validatePhoneDddWithAi(input: {
+  organizationId: number;
+  runId: number;
+  phone?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  professionalName?: string | null;
+  evidence?: string;
+}): Promise<AiDddValidation> {
+  const normalizedPhone = normalizePhone(input.phone);
+  const ddd = phoneDdd(normalizedPhone);
+  const expected = expectedDddsForCampaign(input.city, input.state);
+  if (!ddd) return { valid: false, confidence: 0, reasonCode: "invalid", canonicalDdds: expected, ddd: null, source: "deterministic" };
+
+  const enabled = process.env.SCRAPER_AI_VALIDATE_DDD !== "false";
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_DDD_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
+  if (!enabled || !apiKey) {
+    return {
+      ...dddFallbackValidation(normalizedPhone, input.city, input.state, apiKey ? "fallback_exact" : "ai_unavailable"),
+      reasonCode: apiKey ? dddFallbackValidation(normalizedPhone, input.city, input.state).reasonCode : "ai_unavailable"
+    };
+  }
+
+  const promptVersion = "ddd_location_v1";
+  const cacheInput = {
+    country: input.country || "BR",
+    city: input.city || null,
+    state: input.state || null,
+    ddd,
+    knownLocalDddsHint: expected,
+    rule: "valid=true somente se o DDD atende diretamente a cidade/localidade da campanha ou sua regiao telefonica imediata; mesmo estado mas outra regiao deve ser false."
+  };
+  const inputHash = createHash("sha256").update(JSON.stringify(cacheInput)).digest("hex");
+  const entityId = createHash("sha256").update(`${cacheInput.country}:${cacheInput.state}:${cacheInput.city}:${ddd}`).digest("hex").slice(0, 64);
+
+  const cached = await prisma.aiAnalysisCache.findFirst({
+    where: {
+      organizationId: input.organizationId,
+      entityType: "phone_ddd",
+      entityId,
+      analysisType: "location_compatibility",
+      model,
+      promptVersion,
+      inputHash
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  if (cached?.outputJson) {
+    const out = cached.outputJson as any;
+    return {
+      valid: out.valid === true,
+      confidence: typeof out.confidence === "number" ? out.confidence : 0.5,
+      reasonCode: out.reasonCode || "unknown",
+      canonicalDdds: Array.isArray(out.canonicalDdds) ? out.canonicalDdds.map(String) : expected,
+      ddd,
+      source: "ai",
+      model
+    };
+  }
+
+  try {
+    const client = new OpenAI({ apiKey });
+    const response = await client.chat.completions.create({
+      model,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "Voce valida DDDs brasileiros para campanhas locais. Responda somente JSON compacto. Nao aceite DDD apenas por ser do mesmo estado: precisa atender a cidade/localidade informada ou regiao telefonica imediata."
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "validate_brazil_phone_ddd_for_campaign_location",
+            city: input.city || null,
+            state: input.state || null,
+            country: input.country || "BR",
+            ddd,
+            knownLocalDddsHint: expected,
+            outputSchema: {
+              valid: "boolean",
+              confidence: "0..1",
+              reasonCode: "exact_city|metro_region|same_state_not_city|invalid|unknown",
+              canonicalDdds: "string[]"
+            }
+          })
+        }
+      ]
+    });
+    const parsed = safeJsonParse<any>(response.choices[0]?.message?.content) || {};
+    const result: AiDddValidation = {
+      valid: parsed.valid === true && Number(parsed.confidence ?? 0) >= 0.55,
+      confidence: Math.max(0, Math.min(1, Number(parsed.confidence ?? 0))),
+      reasonCode: parsed.reasonCode || "unknown",
+      canonicalDdds: Array.isArray(parsed.canonicalDdds) ? parsed.canonicalDdds.map(String) : expected,
+      ddd,
+      source: "ai",
+      model
+    };
+
+    await prisma.aiAnalysisCache.create({
+      data: {
+        organizationId: input.organizationId,
+        entityType: "phone_ddd",
+        entityId,
+        analysisType: "location_compatibility",
+        model,
+        promptVersion,
+        inputHash,
+        inputJson: cacheInput,
+        outputJson: result as any,
+        tokensInput: response.usage?.prompt_tokens ?? null,
+        tokensOutput: response.usage?.completion_tokens ?? null,
+        costEstimate: null
+      }
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      ...dddFallbackValidation(normalizedPhone, input.city, input.state, "ai_error"),
+      reasonCode: "ai_error",
+      source: "deterministic",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function isProfessionalInstagramUrl(raw?: string | null): boolean {
   const normalized = normalizeUrl(raw);
   if (!normalized) return false;
@@ -127,20 +363,46 @@ function isProfessionalInstagramUrl(raw?: string | null): boolean {
 
 const WORKER_WRONG_INSTAGRAM_TERMS = [
   "wedding", "fotografia", "photography", "makeup", "maquiagem", "moda", "loja",
-  "store", "food", "viagem", "travel", "arquitetura", "advocacia", "imoveis", "imóveis"
+  "store", "food", "viagem", "travel", "arquitetura", "advocacia", "imoveis", "imóveis",
+  "redepsicologos", "centralterapia", "facilconsulta", "locaisbrasil", "locaisdobrasil",
+  "listamais", "doctoralia", "mundopsicologos", "eguias", "guiamais", "guiafacil",
+  "acheioprofissional", "euterapeuta", "eu terapeuta", "onvita", "saudecidade", "benditoguia",
+  "brasil locais", "brasillocais"
 ];
+
+function instagramHandle(raw: string): string {
+  const normalized = normalizeUrl(raw);
+  if (!normalized) return "";
+  try {
+    return new URL(normalized).pathname.split("/").filter(Boolean)[0]?.toLowerCase() || "";
+  } catch {
+    return "";
+  }
+}
 
 function workerInstagramEvidenceScore(url: string, professionalName: string, evidence = ""): number {
   if (!isProfessionalInstagramUrl(url)) return -1000;
+  const handle = instagramHandle(url);
+  const compactHandle = handle.replace(/[^a-z0-9]/g, "");
+  const normalizedEvidence = normalizeForCompare(evidence);
   const normalized = normalizeForCompare(`${url} ${evidence}`);
   const tokens = professionalNameTokens(professionalName);
   let score = 0;
-  for (const token of tokens) {
-    if (normalized.includes(token)) score += 20;
-  }
-  if (/\b(psi|psico|psicologa|psicologo|psicologia|terapia|terapeuta|crp|atendimento|consulta)\b/i.test(normalized)) score += 45;
-  if (evidenceMatchesName(evidence, professionalName) && /psic[oó]log|psicologia|terapia|crp/i.test(evidence)) score += 35;
-  if (WORKER_WRONG_INSTAGRAM_TERMS.some((term) => normalized.includes(term))) score -= 90;
+
+  const matchedHandleTokens = tokens.filter((token) => compactHandle.includes(token)).length;
+  const matchedEvidenceTokens = tokens.filter((token) => normalizedEvidence.includes(token)).length;
+
+  if (matchedHandleTokens >= 2) score += 55;
+  else if (matchedHandleTokens === 1) score += 25;
+
+  if (matchedEvidenceTokens >= Math.min(2, tokens.length)) score += 35;
+  else if (matchedEvidenceTokens === 1) score += 15;
+
+  if (/(^|[._-])(psi|psico)|psicolog|psicanal|terapia|terapeuta/.test(compactHandle)) score += 45;
+  if (/psic[oó]log|psicologia|psicoterapia|psican[aá]lise|psicanalista|terapia|terapeuta|crp|atendimento|consulta/i.test(evidence)) score += 45;
+  if (evidenceMatchesName(evidence, professionalName) && /psic[oó]log|psicologia|psicoterapia|psican[aá]lise|psicanalista|terapia|crp/i.test(evidence)) score += 45;
+
+  if (WORKER_WRONG_INSTAGRAM_TERMS.some((term) => normalized.includes(term))) score -= 120;
   return score;
 }
 
@@ -702,14 +964,87 @@ export async function postRunLead(
     throw new HttpError(409, `Limite de ${target} novos leads finais atingido para o modo ${run.level}`);
   }
 
-  const phone = normalizePhone(payload.phone);
-  const whatsapp = normalizePhone(payload.whatsapp) ?? phone;
+  const rawPhone = normalizePhone(payload.phone);
+  const rawWhatsapp = normalizePhone(payload.whatsapp) ?? rawPhone;
   const instagramUrl = normalizeUrl(payload.instagramUrl);
   const personName = (payload.personName || payload.name).trim();
   const businessName = payload.name.trim() || personName;
   const evidence = JSON.stringify(payload.rawData || {}).slice(0, 6000);
+
+  if (!isWorkerIndividualProfessionalName(personName)) {
+    await postRunEvent(runId, {
+      kind: "result",
+      title: "Lead recusado: nome não parece profissional individual",
+      leadName: personName,
+      url: payload.sourceUrl || payload.instagramUrl,
+      payload: { externalId: payload.externalId, reason: "non_individual_professional_name" }
+    });
+    throw new HttpError(400, "Lead precisa ser um profissional individual, não agregador/clínica/plataforma");
+  }
+
+  const phoneDddValidation = rawPhone
+    ? await validatePhoneDddWithAi({
+        organizationId: run.organizationId,
+        runId,
+        phone: rawPhone,
+        city: run.campaign.city,
+        state: run.campaign.state,
+        country: run.campaign.country,
+        professionalName: personName,
+        evidence
+      })
+    : null;
+  const whatsappDddValidation = rawWhatsapp && rawWhatsapp !== rawPhone
+    ? await validatePhoneDddWithAi({
+        organizationId: run.organizationId,
+        runId,
+        phone: rawWhatsapp,
+        city: run.campaign.city,
+        state: run.campaign.state,
+        country: run.campaign.country,
+        professionalName: personName,
+        evidence
+      })
+    : phoneDddValidation;
+
+  await postRunEvent(runId, {
+    kind: "debug",
+    title: "IA validou compatibilidade DDD/localidade",
+    leadName: personName,
+    url: payload.sourceUrl || instagramUrl || undefined,
+    payload: {
+      externalId: payload.externalId,
+      city: run.campaign.city,
+      state: run.campaign.state,
+      rawPhone,
+      rawWhatsapp,
+      phoneDddValidation,
+      whatsappDddValidation
+    }
+  });
+
+  const phone = rawPhone && phoneDddValidation?.valid ? rawPhone : null;
+  const whatsapp = rawWhatsapp && whatsappDddValidation?.valid ? rawWhatsapp : phone;
+
   if (!instagramUrl || !isWorkerProfessionalInstagram(instagramUrl, personName, evidence) || (!phone && !whatsapp)) {
-    throw new HttpError(400, "Lead do worker precisa ter Instagram profissional/contextual e telefone/WhatsApp válido");
+    await postRunEvent(runId, {
+      kind: "result",
+      title: "Lead recusado: faltou Instagram profissional ou DDD válido",
+      leadName: personName,
+      url: instagramUrl || payload.sourceUrl,
+      payload: {
+        externalId: payload.externalId,
+        hasInstagram: Boolean(instagramUrl),
+        instagramScore: instagramUrl ? workerInstagramEvidenceScore(instagramUrl, personName, evidence) : null,
+        rawPhone,
+        rawWhatsapp,
+        expectedDddsHint: expectedDddsForCampaign(run.campaign.city, run.campaign.state),
+        phoneDddValidation,
+        whatsappDddValidation,
+        reason: "invalid_instagram_or_phone_ddd"
+      }
+    });
+    throw new HttpError(400, "Lead do worker precisa ter Instagram profissional/contextual e telefone/WhatsApp com DDD da campanha");
   }
   const websiteUrl = sanitizeWorkerWebsite(payload.websiteUrl, personName, evidence);
   const email = sanitizeWorkerEmail(payload.email, personName, websiteUrl, payload.sourceUrl);
@@ -720,6 +1055,7 @@ export async function postRunLead(
     sourceUrl: payload.sourceUrl ?? null,
     rejectedWebsiteUrl: payload.websiteUrl && !websiteUrl ? payload.websiteUrl : undefined,
     rejectedEmail: payload.email && !email ? payload.email : undefined,
+    dddValidation: { phone: phoneDddValidation, whatsapp: whatsappDddValidation },
     websiteStatus: websiteUrl ? "found" : "not_found"
   }));
 

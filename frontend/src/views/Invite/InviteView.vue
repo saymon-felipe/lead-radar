@@ -2,7 +2,7 @@
   <section class="auth-layout">
     <div class="auth-showcase">
       <span class="eyebrow">Lead Radar</span>
-      <h1>Voce foi convidado para uma empresa.</h1>
+      <h1>Você foi convidado para uma empresa.</h1>
       <p v-if="invitation">
         Entre na empresa {{ invitation.organization.name }} usando o email {{ invitation.email }}.
       </p>
@@ -41,7 +41,7 @@
       </form>
 
       <div v-else class="auth-form">
-        <p class="error">{{ error || "Convite indisponivel." }}</p>
+        <p class="error">{{ error || "Convite indisponível." }}</p>
         <RouterLink class="primary-action invite-view__link" to="/auth">Ir para login</RouterLink>
       </div>
     </div>
@@ -77,7 +77,7 @@ export default defineComponent({
   computed: {
     title(): string {
       if (!this.invitation) return "Convite";
-      if (this.invitation.acceptedAt) return "Convite ja aceito";
+      if (this.invitation.acceptedAt) return "Convite já aceito";
       if (this.invitation.expired) return "Convite expirado";
       return this.invitation.userExists ? "Entrar com sua conta" : "Criar sua conta";
     }
@@ -94,7 +94,7 @@ export default defineComponent({
         this.blocked = Boolean(this.invitation.acceptedAt || this.invitation.expired);
       } catch (error) {
         this.blocked = true;
-        this.error = error instanceof Error ? error.message : "Convite invalido";
+        this.error = error instanceof Error ? error.message : "Convite inválido";
       } finally {
         this.loadingDetails = false;
       }

@@ -1,5 +1,5 @@
 <template>
-  <div class="table-responsive">
+  <div class="table-responsive" :style="maxHeight ? { maxHeight: maxHeight, overflowY: 'auto' } : {}">
     <table>
       <thead>
         <tr>
@@ -119,6 +119,11 @@ export default defineComponent({
     selectedMap: {
       type: Object as PropType<Record<string | number, boolean>>,
       default: () => ({})
+    },
+    maxHeight: {
+      type: String,
+      required: false,
+      default: ""
     }
   },
   emits: ["update:selectedMap"],
@@ -265,5 +270,15 @@ th.sortable {
 th.sortable:hover {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-highlight);
+}
+/* Sticky table header when container scrolls vertically */
+.table-responsive {
+  position: relative;
+}
+table thead th {
+  position: sticky;
+  top: 0;
+  background: #131b2e; /* matches --bg-panel-solid */
+  z-index: 10;
 }
 </style>

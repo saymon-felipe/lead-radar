@@ -397,7 +397,7 @@ function stringifyJson(value: unknown) {
 }
 
 .terminal-log-row__time {
-  color: #475569; /* slate-600 */
+  color: #7f8ea6; /* slate-400 equivalent */
   font-size: 0.7rem;
 }
 
@@ -409,7 +409,7 @@ function stringifyJson(value: unknown) {
   margin: 0.2rem 0 0 0;
   padding-left: 0.5rem;
   font-size: 0.7rem;
-  color: #64748b;
+  color: #cbd5e1; /* high-contrast light gray */
   border-left: 1px solid rgba(255, 255, 255, 0.05);
   line-height: 1.4;
 }
@@ -428,7 +428,7 @@ function stringifyJson(value: unknown) {
 }
 
 .terminal-log-row summary {
-  color: #475569;
+  color: #94a3b8; /* slate-400 for readable summary */
   font-family: var(--font-sans);
   font-size: 0.7rem;
   cursor: pointer;
@@ -436,7 +436,7 @@ function stringifyJson(value: unknown) {
 }
 
 .terminal-log-row summary:hover {
-  color: #64748b;
+  color: #cbd5e1;
 }
 
 .terminal-log-row pre {
@@ -447,12 +447,15 @@ function stringifyJson(value: unknown) {
   color: #34d399;
   max-height: 130px;
   overflow-y: auto;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
   font-size: 0.7rem;
   margin-top: 0.2rem;
 }
 
 .terminal-empty {
-  color: #475569;
+  color: #7f8ea6;
   text-align: center;
   padding: 3rem 0;
 }

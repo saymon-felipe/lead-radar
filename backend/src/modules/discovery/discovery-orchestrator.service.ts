@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { prisma } from "../../shared/prisma.js";
 import { HttpError } from "../../shared/errors/http-error.js";
 import { getCampaignDiscoveryStatus, stopCampaignDiscovery } from "./discovery.service.js";
+import { setCampaignDiscoveryLevel } from "../campaigns/discovery-level.store.js";
 
 function defaultTargetForLevel(level: string): number {
   switch (level) {
@@ -37,6 +38,10 @@ export async function createDiscoveryRun(campaignId: number, level: string, limi
     throw new HttpError(404, "Campanha não encontrada");
   }
 
+  if (campaign.status !== "running") {
+    throw new HttpError(409, "Para iniciar o scraping, coloque a campanha em andamento primeiro.");
+  }
+
   // Cancel any existing active runs for this campaign
   await prisma.discoveryRun.updateMany({
     where: {
@@ -51,6 +56,8 @@ export async function createDiscoveryRun(campaignId: number, level: string, limi
   });
 
   const targetFinalLeads = normalizeTargetForLevel(level, limit);
+
+  await setCampaignDiscoveryLevel(campaignId, level);
 
   // Create the new run
   const commandToken = `cmd_${randomBytes(16).toString("hex")}`;

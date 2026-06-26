@@ -13,7 +13,7 @@
     <div class="grid cols-2 organization-page">
       <form class="panel" @submit.prevent="createCompany">
         <h2><i class="ri-building-line"></i> Criar empresa</h2>
-        <p class="muted">Cria uma nova empresa e muda sua sessao atual para ela como administrador.</p>
+        <p class="muted">Cria uma nova empresa e muda sua sessão atual para ela como administrador.</p>
         <label>
           Nome da empresa
           <input v-model="companyForm.name" required placeholder="Ex: Sonus Prime" />
@@ -25,8 +25,8 @@
       </form>
 
       <form v-if="canInvite" class="panel" @submit.prevent="sendInvite">
-        <h2><i class="ri-mail-send-line"></i> Convidar usuario</h2>
-        <p class="muted">O convite e enviado por email. O link abre uma tela externa para login ou criacao de conta.</p>
+        <h2><i class="ri-mail-send-line"></i> Convidar usuário</h2>
+        <p class="muted">O convite é enviado por email. O link abre uma tela externa para login ou criação de conta.</p>
         <label>
           E-mail
           <input v-model="inviteForm.email" type="email" required placeholder="pessoa@empresa.com" />
@@ -52,7 +52,7 @@
 
       <div v-else class="panel">
         <h2><i class="ri-mail-lock-line"></i> Convites</h2>
-        <p class="muted">Apenas admin e manager podem convidar usuarios para a empresa.</p>
+        <p class="muted">Apenas admin e manager podem convidar usuários para a empresa.</p>
       </div>
     </div>
 
@@ -158,7 +158,7 @@ export default defineComponent({
         const session = await api.createOrganization(this.companyForm);
         authSession.applySession(session);
         this.companyForm.name = "";
-        this.companyMessage = "Empresa criada e sessao alterada.";
+        this.companyMessage = "Empresa criada e sessão alterada.";
         await this.load();
       } catch (error) {
         this.error = error instanceof Error ? error.message : "Falha ao criar empresa";

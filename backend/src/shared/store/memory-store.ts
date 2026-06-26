@@ -864,6 +864,7 @@ export class MemoryStore {
           country: item.country,
           status: item.status as Campaign["status"],
           targetQuantity: item.targetQuantity ?? undefined,
+          discoveryLevel: (item as any).discoveryLevel ?? "quick",
           startedAt: toIso(item.startedAt),
           finishedAt: toIso(item.finishedAt),
           createdAt: item.createdAt.toISOString(),

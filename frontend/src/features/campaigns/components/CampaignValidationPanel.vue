@@ -1,6 +1,6 @@
 <template>
   <div v-if="validation" class="panel fade-in campaign-validation">
-    <h2><i class="ri-checkbox-multiple-line"></i> Validacao Comercial da Campanha</h2>
+    <h2><i class="ri-checkbox-multiple-line"></i> Validação Comercial da Campanha</h2>
     <div class="campaign-validation__layout">
       <div>
         <div class="grid cols-4 campaign-validation__metrics">
@@ -23,7 +23,7 @@
         </div>
 
         <h3 class="mb-1">Metas e Criterios Operacionais</h3>
-        <div class="table-responsive">
+        <div class="table-responsive campaign-validation__table-container">
           <table>
             <thead>
               <tr>
@@ -58,13 +58,13 @@
       </div>
 
       <aside class="campaign-validation__decision">
-        <span>Decisao Recomendada</span>
+        <span>Decisão Recomendada</span>
         <div class="mt-1 mb-2">
           <span class="badge hot">
             <i class="ri-guide-line"></i> {{ formatDecisionLabel(validation.recommendedDecision) }}
           </span>
         </div>
-        <h3 class="mt-2">Parecer Tecnico da IA</h3>
+        <h3 class="mt-2">Parecer Técnico da IA</h3>
         <p>{{ validation.interpretation }}</p>
       </aside>
     </div>
@@ -83,3 +83,17 @@ function progressWidth(current: number, target: number) {
   return `${Math.min((current / target) * 100, 100)}%`;
 }
 </script>
+
+<style scoped>
+.campaign-validation__table-container {
+  max-height: 280px;
+  overflow-y: auto;
+  position: relative;
+}
+.campaign-validation__table-container table thead th {
+  position: sticky;
+  top: 0;
+  background: #131b2e; /* matches --bg-panel-solid */
+  z-index: 10;
+}
+</style>

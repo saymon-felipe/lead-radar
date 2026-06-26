@@ -2,7 +2,7 @@
   <section class="auth-layout">
     <div class="auth-showcase">
       <span class="eyebrow">Lead Radar</span>
-      <h1>Operacao comercial mais clara, previsivel e pronta para ganhar ritmo.</h1>
+      <h1>Operação comercial mais clara, previsível e pronta para ganhar ritmo.</h1>
       <p>
         Entre para acompanhar campanhas, leads priorizados, sinais digitais e o funil comercial em uma interface mais
         organizada.
@@ -10,15 +10,15 @@
 
       <div class="auth-feature-list">
         <div class="auth-feature">
-          <strong>Priorizacao de leads</strong>
+          <strong>Priorização de leads</strong>
           <span>Veja quem merece contato primeiro com score, temperatura e oferta sugerida.</span>
         </div>
         <div class="auth-feature">
           <strong>Campanhas por nicho e cidade</strong>
-          <span>Organize a prospeccao em frentes claras, com leitura rapida do desempenho comercial.</span>
+          <span>Organize a prospecção em frentes claras, com leitura rápida do desempenho comercial.</span>
         </div>
         <div class="auth-feature">
-          <strong>Analise de presenca digital</strong>
+          <strong>Análise de presença digital</strong>
           <span>Entenda sinais de site, redes sociais e oportunidades antes de escrever a abordagem.</span>
         </div>
       </div>

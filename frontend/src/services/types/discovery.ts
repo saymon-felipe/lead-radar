@@ -62,6 +62,8 @@ export interface DiscoveryStatus {
     extractedProfessionals: number;
     reviewed: number;
     inserted: number;
+    updated?: number;
+    accepted?: number;
   };
   events: DiscoveryTraceEvent[];
 }

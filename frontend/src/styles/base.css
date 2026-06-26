@@ -1,4 +1,4 @@
-﻿/* Base Styles & Respiro Visual */
+/* Base Styles & Respiro Visual */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -72,5 +72,15 @@ body {
 
 .fade-in-up {
   animation: fadeInUp var(--transition-normal) forwards;
+}
+
+/* Global Link Styling */
+a {
+  color: #38bdf8;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+a:hover {
+  color: #7dd3fc;
 }
 

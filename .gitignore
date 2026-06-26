@@ -8,3 +8,10 @@ frontend/.env
 storage/
 backend/storage/
 .DS_Store
+worker/vendor/models/*.gguf
+worker/vendor/tmp/
+worker/vendor/**/*.zip
+worker/vendor/llama.cpp/cpu/*
+worker/vendor/llama.cpp/cuda/*
+!worker/vendor/llama.cpp/cpu/.gitkeep
+!worker/vendor/llama.cpp/cuda/.gitkeep

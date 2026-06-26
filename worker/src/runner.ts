@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { getLocalAiService } from "./local-ai/service";
 
 interface ExtractedContacts {
   emails: string[];
@@ -30,6 +31,7 @@ interface ProfessionalSeed {
   profileUrl?: string;
   websiteUrl?: string;
   instagramUrl?: string;
+  instagramEvidence?: string;
   contacts: ExtractedContacts;
   evidence: string;
   professionalRegistry?: string;
@@ -41,6 +43,7 @@ interface LeadDraft extends ProfessionalSeed {
   whatsapp?: string;
   email?: string;
   finalInstagramUrl?: string;
+  finalInstagramEvidence?: string;
   finalWebsiteUrl?: string;
 }
 
@@ -75,6 +78,12 @@ const EMAIL_BLOCKED_DOMAINS = [
   "doctoralia.com.br",
   "mundopsicologos.com.br",
   "mundopsicologos.com",
+  "redepsicologos.com.br",
+  "centralterapia.com.br",
+  "facilconsulta.com.br",
+  "locaisdobrasil.com.br",
+  "locaisbrasil.com.br",
+  "eguias.net",
   "empresafone.com.br",
   "guiamais.com.br",
   "guiafacil.com",
@@ -87,6 +96,12 @@ const EMAIL_BLOCKED_DOMAINS = [
 const DIRECTORY_HOST_PARTS = [
   "doctoralia",
   "mundopsicologos",
+  "redepsicologos",
+  "centralterapia",
+  "facilconsulta",
+  "locaisdobrasil",
+  "locaisbrasil",
+  "eguias",
   "guiamais",
   "guiafacil",
   "listamais",
@@ -101,7 +116,13 @@ const DIRECTORY_HOST_PARTS = [
   "catalogo",
   "guiatelefone",
   "qualotelefone",
-  "mapadatcs"
+  "mapadatcs",
+  "euterapeuta",
+  "benditoguia",
+  "saudecidade",
+  "onvita",
+  "brasillocais",
+  "psicologas.biz"
 ];
 
 const BLOCKED_HOST_PARTS = [
@@ -136,7 +157,26 @@ const WRONG_INSTAGRAM_TERMS = [
   "arquitetura",
   "advocacia",
   "imoveis",
-  "imóveis"
+  "imóveis",
+  "redepsicologos",
+  "centralterapia",
+  "facilconsulta",
+  "locaisbrasil",
+  "locaisdobrasil",
+  "listamais",
+  "doctoralia",
+  "mundopsicologos",
+  "eguias",
+  "guiamais",
+  "guiafacil",
+  "acheioprofissional",
+  "euterapeuta",
+  "eu terapeuta",
+  "onvita",
+  "saudecidade",
+  "benditoguia",
+  "brasillocais",
+  "brasil locais"
 ];
 
 const PROFESSION_TERMS = /psic[oó]log[ao]?|psicologia|psicoterapia|terapia|terapeuta|crp|atendimento|consulta/i;
@@ -261,16 +301,35 @@ function evidenceMatchesName(evidence: string, name: string): boolean {
   return matches >= Math.min(2, tokens.length);
 }
 
+const ENTITY_NAME_TERMS = [
+  "rede psicologos", "redepsicologos", "central terapia", "centralterapia",
+  "facil consulta", "facilconsulta", "locais brasil", "locais do brasil", "locaisbrasil",
+  "lista mais", "listamais", "os mais recomendados", "mais recomendados",
+  "doctoralia", "mundo psicologos", "mundopsicologos", "achei profissional", "acheioprofissional",
+  "guia telefone", "guiatelefone", "guia facil", "guiafacil", "eguias", "e guias",
+  "analise do comportamento", "análise do comportamento",
+  "clinica", "clínica", "instituto", "centro", "espaco", "espaço", "associacao", "associação",
+  "terapia", "psicologia", "psicologos", "psicólogos", "profissionais", "recomendados", "melhores"
+];
+
+function looksLikeEntityName(raw: string): boolean {
+  const normalized = normalizeForCompare(raw);
+  if (!normalized) return true;
+  return ENTITY_NAME_TERMS.some((term) => normalized.includes(normalizeForCompare(term)));
+}
+
 function isLikelyPersonName(raw: string): boolean {
   const value = normalizeWhitespace(raw.replace(/^(dr\.?|dra\.?|psic[oó]loga?|psic[oó]logo)\s+/i, ""));
   const normalized = normalizeForCompare(value);
   if (!value || value.length < 5 || value.length > 80) return false;
-  if (/\b(rua|avenida|av|bairro|centro|curitiba|londrina|sao paulo|são paulo|cristo rei|batel|bigorrilho|como chegar|ver telefone|solicitar exclusao|agendar|endereco|endereço|clinica|clínica|instituto|espaco|espaço|associacao|associação|hospital|unidade)\b/i.test(normalized)) return false;
+  if (looksLikeEntityName(value)) return false;
+  if (/\b(rua|avenida|av|bairro|centro|curitiba|londrina|sao paulo|são paulo|cristo rei|batel|bigorrilho|como chegar|ver telefone|solicitar exclusao|agendar|endereco|endereço|hospital|unidade)\b/i.test(normalized)) return false;
   if (/\b(e|ou|de|da|do|das|dos)$/i.test(normalized)) return false;
   const tokens = value.split(/\s+/).filter(Boolean);
   if (tokens.length < 2 || tokens.length > 6) return false;
+  if (tokens.some((token) => ["rede", "central", "lista", "guia", "clinica", "instituto", "centro", "terapia", "psicologia", "psicologos", "recomendados", "melhores"].includes(normalizeForCompare(token)))) return false;
   const capitalized = tokens.filter((token) => /^[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+$/.test(token) || /^(de|da|do|das|dos|e)$/i.test(token));
-  return capitalized.length >= Math.max(2, tokens.length - 1);
+  return capitalized.length >= Math.max(2, tokens.length - 1) && professionalNameTokens(value).length >= 2;
 }
 
 function extractNameFromEvidence(text: string): string | undefined {
@@ -319,22 +378,42 @@ function isInstagramProfileUrl(url: string): boolean {
   }
 }
 
+function instagramHandle(raw: string): string {
+  try {
+    return new URL(raw).pathname.split("/").filter(Boolean)[0]?.toLowerCase() || "";
+  } catch {
+    return "";
+  }
+}
+
 function instagramEvidenceScore(url: string, evidence: string, name: string): number {
+  if (!isInstagramProfileUrl(url)) return -1000;
+  const handle = instagramHandle(url);
+  const compactHandle = handle.replace(/[^a-z0-9]/g, "");
+  const normalizedEvidence = normalizeForCompare(evidence);
   const normalized = normalizeForCompare(`${url} ${evidence}`);
   const tokens = professionalNameTokens(name);
   let score = 0;
-  for (const token of tokens) {
-    if (normalized.includes(token)) score += 20;
-  }
-  if (INSTAGRAM_PROFESSION_TERMS.test(normalized)) score += 35;
-  if (evidenceMatchesName(evidence, name) && PROFESSION_TERMS.test(evidence)) score += 35;
-  if (WRONG_INSTAGRAM_TERMS.some((term) => normalized.includes(term))) score -= 80;
+
+  const matchedHandleTokens = tokens.filter((token) => compactHandle.includes(token)).length;
+  const matchedEvidenceTokens = tokens.filter((token) => normalizedEvidence.includes(token)).length;
+
+  if (matchedHandleTokens >= 2) score += 55;
+  else if (matchedHandleTokens === 1) score += 25;
+
+  if (matchedEvidenceTokens >= Math.min(2, tokens.length)) score += 35;
+  else if (matchedEvidenceTokens === 1) score += 15;
+
+  if (/(^|[._-])(psi|psico)|psicolog|psicanal|terapia|terapeuta/.test(compactHandle)) score += 45;
+  if (/psic[oó]log|psicologia|psicoterapia|psican[aá]lise|psicanalista|terapia|terapeuta|crp|atendimento|consulta/i.test(evidence)) score += 45;
+  if (evidenceMatchesName(evidence, name) && /psic[oó]log|psicologia|psicoterapia|psican[aá]lise|psicanalista|terapia|crp/i.test(evidence)) score += 45;
+
+  if (WRONG_INSTAGRAM_TERMS.some((term) => normalized.includes(term))) score -= 120;
   return score;
 }
 
 function isProfessionalInstagram(url: string, evidence: string, name: string): boolean {
-  if (!isInstagramProfileUrl(url)) return false;
-  return instagramEvidenceScore(url, evidence, name) >= 45;
+  return instagramEvidenceScore(url, evidence, name) >= 50;
 }
 
 function looksLikeOwnWebsite(url: string, name: string, evidence: string): boolean {
@@ -392,7 +471,11 @@ function rankPhones(phones: string[], campaign: CampaignInfo, evidence = ""): st
     maringá: ["44"]
   };
   const expected = cityDdds[normalizeForCompare(campaign.city)] ?? [];
-  return unique(phones).sort((a, b) => phoneScore(b, expected, evidence) - phoneScore(a, expected, evidence));
+  const uniquePhones = unique(phones);
+  // Nao filtra DDD no worker. O backend faz a validacao definitiva com IA
+  // usando a localidade da campanha. Aqui apenas ordenamos para priorizar os
+  // telefones mais provaveis e manter rastreabilidade dos descartes no backend.
+  return uniquePhones.sort((a, b) => phoneScore(b, expected, evidence) - phoneScore(a, expected, evidence));
 }
 
 function phoneScore(phone: string, expectedDdds: string[], evidence: string): number {
@@ -445,7 +528,8 @@ function extractSeedsFromPage(html: string, pageUrl: string, campaign: CampaignI
       const href = resolveUrl($(a).attr("href"), pageUrl);
       return href ? { text: normalizeWhitespace($(a).text()), href } : undefined;
     }).get().filter((item): item is { text: string; href: string } => Boolean(item));
-    const instagramUrl = links.find((link) => isInstagramProfileUrl(link.href))?.href;
+    const instagramLink = links.find((link) => isInstagramProfileUrl(link.href));
+    const instagramUrl = instagramLink?.href;
     const profileUrl = links.find((link) => !isBlockedResult(link.href) && (isDirectoryUrl(link.href) || hostOf(link.href) === hostOf(pageUrl)))?.href;
     const websiteUrl = links.find((link) => looksLikeOwnWebsite(link.href, name, `${link.text} ${text}`))?.href;
 
@@ -455,6 +539,7 @@ function extractSeedsFromPage(html: string, pageUrl: string, campaign: CampaignI
       profileUrl,
       websiteUrl,
       instagramUrl,
+      instagramEvidence: instagramUrl ? `${normalizeWhitespace($('title').text())} ${text.slice(0, 500)} ${instagramLink?.text || ""}` : undefined,
       contacts,
       evidence: text.slice(0, 900),
       professionalRegistry: extractProfessionalRegistry(text),
@@ -521,6 +606,20 @@ export async function runDiscovery(
     timeout: 30000
   });
 
+  const localAi = getLocalAiService();
+
+  const validatePersonName = async (name: string, evidence?: string): Promise<{ ok: boolean; cleanedName?: string; source: "deterministic" | "local_ai" }> => {
+    if (!isLikelyPersonName(name)) return { ok: false, source: "deterministic" };
+    const localCheck = await localAi.checkPersonName({ name, evidence, city: undefined, niche: undefined }).catch(() => undefined);
+    if (localCheck && localCheck.confidence >= 0.72 && localCheck.isPerson === false) {
+      return { ok: false, cleanedName: localCheck.cleanedName, source: "local_ai" };
+    }
+    if (localCheck?.cleanedName && localCheck.isPerson && isLikelyPersonName(localCheck.cleanedName)) {
+      return { ok: true, cleanedName: localCheck.cleanedName, source: "local_ai" };
+    }
+    return { ok: true, source: "deterministic" };
+  };
+
   const sendEvent = async (kind: string, title: string, leadName?: string, url?: string, payload?: any) => {
     try {
       await client.post(`/api/workers/runs/${runId}/events`, {
@@ -532,7 +631,10 @@ export async function runDiscovery(
         payload: payload || {}
       });
     } catch (err: any) {
-      console.error("Failed to send event to backend:", err.message);
+      const details = err.response
+        ? `${err.response.status} ${JSON.stringify(err.response.data || {})}`
+        : err.message;
+      console.error("Failed to send event to backend:", details);
     }
   };
 
@@ -543,6 +645,8 @@ export async function runDiscovery(
   try {
     checkAbort();
     await sendEvent("state_change", "Iniciando worker local", undefined, undefined, { level, limit });
+    const localAiStatus = await localAi.status().catch(() => undefined);
+    await sendEvent("debug", localAiStatus?.available ? "IA local disponível" : "IA local indisponível/desativada", undefined, undefined, { localAi: localAiStatus || null });
 
     const runRes = await client.post(`/api/workers/runs/${runId}/claim`, {});
     const campaign = runRes.data.campaign as CampaignInfo;
@@ -587,6 +691,30 @@ export async function runDiscovery(
       return filtered;
     };
 
+    const smartDuckSearch = async (query: string, maxResults = profile.maxSerpResultsPerQuery, rewrite?: { name?: string; missing?: Array<"instagram" | "phone" | "website" | "crp"> }): Promise<SearchResult[]> => {
+      const primary = await duckSearch(query, maxResults);
+      if (primary.length > 0 || !rewrite) return primary;
+      const rewritten = await localAi.rewriteQueries({
+        originalQuery: query,
+        professionalName: rewrite.name,
+        city: campaign.city,
+        state: campaign.state,
+        niche: campaign.niche,
+        missing: rewrite.missing || [],
+        failedQueries: [query]
+      }).catch(() => undefined);
+      const nextQueries = (rewritten?.queries || []).filter(Boolean).slice(0, 2);
+      if (!nextQueries.length) return primary;
+      await sendEvent("debug", "IA local reescreveu busca sem resultados", rewrite.name, undefined, { originalQuery: query, queries: nextQueries });
+      const merged: SearchResult[] = [];
+      for (const next of nextQueries) {
+        const nextResults = await duckSearch(next, Math.max(3, Math.ceil(maxResults / 2))).catch(() => []);
+        merged.push(...nextResults);
+        if (merged.length >= maxResults) break;
+      }
+      return Array.from(new Map(merged.map((result) => [result.url, result])).values()).slice(0, maxResults);
+    };
+
     const inspectPage = async (url: string): Promise<{ html: string; text: string; title: string; h1: string; contacts: ExtractedContacts; instagramUrls: string[] }> => {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 18000 });
       const html = await page.content();
@@ -594,12 +722,15 @@ export async function runDiscovery(
       const text = await page.evaluate(() => document.body?.innerText || "").catch(() => "");
       const h1 = await page.evaluate(() => document.querySelector("h1")?.textContent || "").catch(() => "");
       const $ = cheerio.load(html);
+      const normalizedText = normalizeWhitespace(text);
+      const cleaned = await localAi.cleanHtmlText({ url, title, text: normalizedText.slice(0, 5000), purpose: "profile_validation" }).catch(() => undefined);
+      const aiText = cleaned?.confidence && cleaned.confidence >= 0.55 ? cleaned.relevantText : normalizedText;
       return {
         html,
-        text: normalizeWhitespace(text),
+        text: normalizeWhitespace(aiText),
         title,
         h1: normalizeWhitespace(h1 || ""),
-        contacts: extractContacts(`${text} ${html.slice(0, 50000)}`),
+        contacts: extractContacts(`${aiText} ${html.slice(0, 50000)}`),
         instagramUrls: extractInstagramUrlsFromHtml($, url)
       };
     };
@@ -694,23 +825,37 @@ export async function runDiscovery(
       await page.waitForTimeout(500);
     }
 
-    const dedupedSeeds = Array.from(new Map(seeds.filter((seed) => isLikelyPersonName(seed.name)).map((seed) => [normalizeForCompare(seed.name), seed])).values()).slice(0, profile.maxSeeds);
-    await sendEvent("state_change", `${dedupedSeeds.length} profissionais extraídos para validação local`, undefined, undefined, { total: dedupedSeeds.length });
+    const candidateSeeds = Array.from(new Map(seeds.map((seed) => [normalizeForCompare(seed.name), seed])).values()).slice(0, Math.max(profile.maxSeeds * 2, profile.maxSeeds));
+    const validatedSeeds: ProfessionalSeed[] = [];
+    for (const seed of candidateSeeds) {
+      const nameCheck = await validatePersonName(seed.name, seed.evidence);
+      if (!nameCheck.ok) {
+        await sendEvent("debug", "Seed descartado antes da validação: nome genérico", seed.name, seed.sourceUrl, { source: nameCheck.source });
+        continue;
+      }
+      validatedSeeds.push(nameCheck.cleanedName && nameCheck.cleanedName !== seed.name ? { ...seed, name: nameCheck.cleanedName } : seed);
+      if (validatedSeeds.length >= profile.maxSeeds) break;
+    }
+    const dedupedSeeds = validatedSeeds;
+    await sendEvent("state_change", `${dedupedSeeds.length} profissionais extraídos para validação local`, undefined, undefined, { total: dedupedSeeds.length, rejectedByNameGate: candidateSeeds.length - dedupedSeeds.length });
 
-    const findInstagramForName = async (name: string): Promise<string | undefined> => {
+    const findInstagramForName = async (name: string): Promise<{ url: string; evidence: string; score: number } | undefined> => {
       const queries = [
         `site:instagram.com "${name}" "${campaign.city}" psicologa psicologo`,
         `site:instagram.com "${name}" psicologia terapia CRP`,
         `"${name}" "${campaign.city}" Instagram psicóloga`
       ];
       for (const query of queries) {
-        const results = await duckSearch(query, 6);
+        const results = await smartDuckSearch(query, 6, { name, missing: ["instagram"] });
         const ranked = results
           .filter((result) => isInstagramProfileUrl(result.url))
-          .map((result) => ({ result, score: instagramEvidenceScore(result.url, `${result.title} ${result.snippet}`, name) }))
-          .filter((item) => item.score >= 45)
+          .map((result) => {
+            const evidence = `${result.title} ${result.snippet}`;
+            return { result, evidence, score: instagramEvidenceScore(result.url, evidence, name) };
+          })
+          .filter((item) => item.score >= 50)
           .sort((a, b) => b.score - a.score);
-        if (ranked[0]) return ranked[0].result.url;
+        if (ranked[0]) return { url: ranked[0].result.url, evidence: ranked[0].evidence, score: ranked[0].score };
       }
       return undefined;
     };
@@ -724,24 +869,41 @@ export async function runDiscovery(
       let bestWebsite = draft.websiteUrl;
       let contacts = draft.contacts;
       let instagram = draft.finalInstagramUrl || draft.instagramUrl;
+      let instagramEvidence = draft.finalInstagramEvidence || draft.instagramEvidence || draft.evidence;
+      let inspectedDirectoryPages = 0;
       for (const query of queries) {
         if ((contacts.phones.length || contacts.whatsappNumbers.length) && instagram && bestWebsite) break;
-        const results = await duckSearch(query, 5);
+        const results = await smartDuckSearch(query, 5, { name: draft.name, missing: ["phone", "website"] });
         for (const result of results.slice(0, 3)) {
           if (isBlockedResult(result.url)) continue;
           if (isInstagramProfileUrl(result.url)) {
-            if (!instagram && isProfessionalInstagram(result.url, `${result.title} ${result.snippet}`, draft.name)) instagram = result.url;
+            const evidence = `${result.title} ${result.snippet}`;
+            if (!instagram && isProfessionalInstagram(result.url, evidence, draft.name)) {
+              instagram = result.url;
+              instagramEvidence = evidence;
+            }
             continue;
           }
-          if (!looksLikeOwnWebsite(result.url, draft.name, `${result.title} ${result.snippet}`) && isDirectoryUrl(result.url)) continue;
+          const resultEvidence = `${result.title} ${result.snippet}`;
+          const directoryResult = isDirectoryUrl(result.url);
+          const ownWebsiteCandidate = looksLikeOwnWebsite(result.url, draft.name, resultEvidence);
+          if (directoryResult && !evidenceMatchesName(resultEvidence, draft.name) && inspectedDirectoryPages >= 2) continue;
+          if (directoryResult && inspectedDirectoryPages >= 2 && (contacts.phones.length || contacts.whatsappNumbers.length)) continue;
           try {
             const inspected = await inspectPage(result.url);
             const evidence = `${result.title} ${result.snippet} ${inspected.title} ${inspected.h1} ${inspected.text.slice(0, 1500)}`;
             if (!evidenceMatchesName(evidence, draft.name)) continue;
+            if (directoryResult) inspectedDirectoryPages += 1;
             contacts = mergeContacts(contacts, inspected.contacts);
-            const candidateInstagram = inspected.instagramUrls.find((url) => isProfessionalInstagram(url, evidence, draft.name));
-            if (!instagram && candidateInstagram) instagram = candidateInstagram;
-            if (!bestWebsite && looksLikeOwnWebsite(result.url, draft.name, evidence)) {
+            const candidateInstagram = inspected.instagramUrls
+              .map((url) => ({ url, score: instagramEvidenceScore(url, evidence, draft.name) }))
+              .filter((item) => item.score >= 50)
+              .sort((a, b) => b.score - a.score)[0];
+            if (!instagram && candidateInstagram) {
+              instagram = candidateInstagram.url;
+              instagramEvidence = evidence;
+            }
+            if (!bestWebsite && !directoryResult && (ownWebsiteCandidate || looksLikeOwnWebsite(result.url, draft.name, evidence))) {
               bestWebsite = canonicalWebsiteUrl(result.url);
             }
           } catch {
@@ -754,6 +916,7 @@ export async function runDiscovery(
         ...draft,
         contacts,
         finalInstagramUrl: instagram,
+        finalInstagramEvidence: instagramEvidence,
         finalWebsiteUrl: bestWebsite,
         whatsapp: rankPhones(contacts.whatsappNumbers, campaign, draft.evidence)[0] || rankedPhones[0],
         phone: rankedPhones[0],
@@ -768,10 +931,17 @@ export async function runDiscovery(
       if (inserted >= profile.targetFinalLeads || isExpired()) break;
       checkAbort();
       await sendEvent("state_change", "Validando profissional", seed.name, seed.sourceUrl, { hasPhone: seed.contacts.phones.length > 0, hasInstagram: Boolean(seed.instagramUrl) });
+      const nameCheck = await validatePersonName(seed.name, seed.evidence);
+      if (!nameCheck.ok) {
+        await sendEvent("result", "Profissional descartado: nome não individual", seed.name, seed.sourceUrl, { reason: "non_individual_professional_name", source: nameCheck.source });
+        continue;
+      }
+      if (nameCheck.cleanedName && nameCheck.cleanedName !== seed.name) seed.name = nameCheck.cleanedName;
 
       let draft: LeadDraft = {
         ...seed,
         finalInstagramUrl: seed.instagramUrl,
+        finalInstagramEvidence: seed.instagramEvidence,
         finalWebsiteUrl: seed.websiteUrl,
         whatsapp: rankPhones(seed.contacts.whatsappNumbers, campaign, seed.evidence)[0],
         phone: rankPhones([...seed.contacts.whatsappNumbers, ...seed.contacts.phones], campaign, seed.evidence)[0],
@@ -780,7 +950,11 @@ export async function runDiscovery(
 
       if (!draft.finalInstagramUrl) {
         try {
-          draft.finalInstagramUrl = await findInstagramForName(seed.name);
+          const foundInstagram = await findInstagramForName(seed.name);
+          if (foundInstagram) {
+            draft.finalInstagramUrl = foundInstagram.url;
+            draft.finalInstagramEvidence = foundInstagram.evidence;
+          }
         } catch (err: any) {
           await sendEvent("error", "Falha ao buscar Instagram", seed.name, undefined, { error: err.message });
         }
@@ -828,7 +1002,9 @@ export async function runDiscovery(
           address: draft.address,
           rawData: {
             evidence: draft.evidence,
+            instagramEvidence: draft.finalInstagramEvidence || draft.evidence,
             contacts: draft.contacts,
+            instagramScore: draft.finalInstagramUrl ? instagramEvidenceScore(draft.finalInstagramUrl, `${draft.finalInstagramEvidence || ""} ${draft.evidence}`, seed.name) : null,
             profileUrl: seed.profileUrl,
             websiteStatus: draft.finalWebsiteUrl ? "found" : "not_found"
           }
@@ -860,6 +1036,8 @@ export async function runDiscovery(
       }
     }
 
+    const localAiTelemetry = await localAi.telemetry().catch(() => undefined);
+    await sendEvent("debug", "Resumo IA local", undefined, undefined, { localAiTelemetry: localAiTelemetry || null });
     checkAbort();
     await client.post(`/api/workers/runs/${runId}/complete`, {});
     await sendEvent("state_change", "Busca concluída com sucesso", undefined, undefined, { inserted, updated, accepted, target: profile.targetFinalLeads });

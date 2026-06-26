@@ -10,8 +10,9 @@ import {
   stopDiscoveryRun,
   getDiscoveryRunStatus
 } from "./discovery-orchestrator.service.js";
+import { getCampaignDiscoveryLevel, setCampaignDiscoveryLevel, type CampaignDiscoveryLevel } from "../campaigns/discovery-level.store.js";
 
-function defaultDiscoveryTarget(level: "nano" | "quick" | "medium" | "deep"): number {
+function defaultDiscoveryTarget(level: CampaignDiscoveryLevel): number {
   switch (level) {
     case "nano": return 5;
     case "medium": return 30;
@@ -35,7 +36,7 @@ export async function discoveryRoutes(app: FastifyInstance) {
   app.post("/api/campaigns/:id/discover", async (request) => {
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
     const query = z.object({
-      level: z.enum(["nano", "quick", "medium", "deep"]).default("quick"),
+      level: z.enum(["nano", "quick", "medium", "deep"]).optional(),
       limit: z.coerce.number().int().min(1).max(60).optional()
     }).parse(request.query);
 
@@ -43,15 +44,24 @@ export async function discoveryRoutes(app: FastifyInstance) {
     const campaignRecord = await prisma.searchCampaign.findFirst({ where: { id, organizationId } });
     if (!campaignRecord) throw new HttpError(404, "Campanha não encontrada");
 
-    const campaign = serializeCampaign(campaignRecord) as any;
-
-    const mode = process.env.DISCOVERY_EXECUTION_MODE || "legacy";
-    const targetFinalLeads = query.level === "nano" ? 5 : query.limit ?? defaultDiscoveryTarget(query.level);
-    if (mode === "worker") {
-      return createDiscoveryRun(id, query.level, targetFinalLeads);
+    if (campaignRecord.status !== "running") {
+      throw new HttpError(409, "Para iniciar o scraping, coloque a campanha em andamento primeiro.");
     }
 
-    return discoverCampaign(campaign, { level: query.level, targetFinalLeads });
+    const currentLevel = await getCampaignDiscoveryLevel(id);
+    const level = query.level ?? currentLevel;
+    const savedLevel = query.level && query.level !== currentLevel
+      ? await setCampaignDiscoveryLevel(id, level)
+      : currentLevel;
+    const campaign = serializeCampaign({ ...campaignRecord, discoveryLevel: savedLevel }) as any;
+
+    const mode = process.env.DISCOVERY_EXECUTION_MODE || "legacy";
+    const targetFinalLeads = level === "nano" ? 5 : query.limit ?? defaultDiscoveryTarget(level);
+    if (mode === "worker") {
+      return createDiscoveryRun(id, level, targetFinalLeads);
+    }
+
+    return discoverCampaign(campaign, { level, targetFinalLeads });
   });
 
   app.post("/api/campaigns/:id/discover/stop", async (request) => {

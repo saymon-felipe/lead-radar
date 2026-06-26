@@ -3,9 +3,9 @@
     <div class="lead-grid__header">
       <h2><i class="ri-user-shared-line"></i> Leads Qualificados ({{ leads.length }})</h2>
     </div>
-    <GenericGrid :data="leads" :columns="columns" row-key="id">
+    <GenericGrid :data="leads" :columns="columns" row-key="id" max-height="500px">
       <template #businessName="{ row }">
-        <span class="text-highlight">
+        <span class="text-highlight text-truncate-lead" :title="row.businessName">
           <RouterLink :to="`/leads/${row.id}`" class="lead-grid__link">
             <i class="ri-arrow-right-up-line"></i> {{ row.businessName }}
           </RouterLink>

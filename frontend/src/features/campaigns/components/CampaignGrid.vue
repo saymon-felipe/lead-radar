@@ -29,9 +29,9 @@
     </div>
 
     <div class="table-responsive">
-      <GenericGrid :data="campaigns" :columns="columns" :selectable="true" v-model:selectedMap="selectedMap" row-key="id">
+      <GenericGrid :data="campaigns" :columns="columns" :selectable="true" v-model:selectedMap="selectedMap" row-key="id" max-height="350px">
         <template #name="{ row }">
-          <span class="text-highlight"><strong>{{ row.name }}</strong></span>
+          <span class="text-highlight text-truncate-campaign" :title="row.name"><strong>{{ row.name }}</strong></span>
         </template>
         <template #city="{ row }">
           {{ row.city }}/{{ row.state }}

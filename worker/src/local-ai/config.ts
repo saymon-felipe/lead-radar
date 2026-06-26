@@ -47,7 +47,7 @@ export function defaultLocalAiConfig(): LocalAiConfig {
     strictCuda: false,
     contextSize: 2048,
     maxTokens: 192,
-    timeoutMs: 12000,
+    timeoutMs: 45000,
     autoStartServer: true,
     tasks: {
       personName: true,
@@ -63,6 +63,7 @@ function normalizeConfig(config: Partial<LocalAiConfig>): LocalAiConfig {
   const normalized: LocalAiConfig = {
     ...defaults,
     ...config,
+    timeoutMs: config.timeoutMs === 12000 || !config.timeoutMs ? defaults.timeoutMs : config.timeoutMs,
     endpoint: config.endpoint?.trim() || defaults.endpoint,
     modelPath: config.modelPath?.trim() || defaults.modelPath,
     serverPath: config.serverPath?.trim() || undefined,

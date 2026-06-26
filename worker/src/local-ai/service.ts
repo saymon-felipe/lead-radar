@@ -19,7 +19,7 @@ import {
 } from "./types";
 
 const disabledPersonName: PersonNameCheckResult = { isPerson: true, confidence: 0, entityType: "unknown", reasonCode: "local_ai_disabled" };
-const MAX_FAILURE_STREAK = 2;
+const MAX_FAILURE_STREAK = 10;
 const taskFailureStreaks = new Map<LocalAiTaskName, number>();
 
 export class LocalAiService {

@@ -14,7 +14,9 @@
     "dev:worker": "npm run dev --workspace worker",
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces",
-    "prisma:generate": "npm run prisma:generate --workspace backend"
+    "prisma:generate": "npm run prisma:generate --workspace backend",
+    "heroku-postbuild": "npm run prisma:generate --workspace backend && npm run build --workspace backend",
+    "start": "node backend/dist/server.js"
   },
 
   "engines": {

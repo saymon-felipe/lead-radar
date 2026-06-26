@@ -1,6 +1,8 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
+import path from "path";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { ZodError } from "zod";
@@ -13,6 +15,9 @@ const app = Fastify({
   logger: true
 });
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const schemaPath = path.resolve(__dirname, "..", "prisma", "schema.prisma");
+
 // Localiza o script CLI do Prisma de forma dinâmica
 const require = createRequire(import.meta.url);
 const prismaCliPath = require.resolve("prisma/package.json");
@@ -20,8 +25,8 @@ const prismaCliScript = prismaCliPath.replace("package.json", "build/index.js");
 
 // Executa as migrações do banco de dados na inicialização em todos os ambientes
 try {
-  app.log.info("Executando migrações pendentes do banco de dados...");
-  const { stdout, stderr } = await execAsync(`"${process.execPath}" "${prismaCliScript}" migrate deploy`);
+  app.log.info(`Executando migrações pendentes do banco de dados com schema: ${schemaPath}`);
+  const { stdout, stderr } = await execAsync(`"${process.execPath}" "${prismaCliScript}" migrate deploy --schema="${schemaPath}"`);
   if (stdout) app.log.info(stdout.trim());
   if (stderr) app.log.warn(stderr.trim());
   app.log.info("Migrações de banco de dados verificadas/aplicadas com sucesso!");

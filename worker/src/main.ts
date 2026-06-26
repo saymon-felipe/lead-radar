@@ -71,11 +71,17 @@ function saveConfig() {
   }
 }
 
+function getFrontendUrl(): string {
+  return config.environment === "development"
+    ? "http://localhost:5173"
+    : "https://lead-radar-lilac.vercel.app";
+}
+
 function beginManualLogin() {
   config.loginRequestedAt = new Date().toISOString();
   saveConfig();
   updateTrayMenu();
-  shell.openExternal(`${config.apiBaseUrl.replace(/3333|3334/, "5173")}/auth`);
+  shell.openExternal(`${getFrontendUrl()}/auth`);
 }
 
 function hasPendingManualLogin(): boolean {
@@ -189,7 +195,7 @@ function updateTrayMenu() {
       label: "Alternar Ambiente",
       click: () => {
         config.environment = config.environment === "development" ? "production" : "development";
-        config.apiBaseUrl = config.environment === "development" ? "http://localhost:3333" : "https://lead-radar-api.herokuapp.com";
+        config.apiBaseUrl = config.environment === "development" ? "http://localhost:3333" : "https://lead-radar-a4f3b681073a.herokuapp.com";
         logout();
         updateTrayMenu();
       }

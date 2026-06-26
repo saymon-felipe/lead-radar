@@ -17,6 +17,9 @@ export interface WorkerStatus {
 }
 
 function getApiBaseUrl(): string {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
   if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
     // Local dev: replace frontend port 5173 with backend port 3334
     return window.location.origin.replace("5173", "3334");
@@ -99,13 +102,21 @@ class WorkerClient {
       // Fetch the actual backend API base URL from the backend's health check (proxied)
       let targetApiBaseUrl = "";
       try {
-        const backendHealth = await axios.get("/health");
+        const backendHealth = await axios.get(`${getApiBaseUrl()}/health`);
         targetApiBaseUrl = backendHealth.data.apiBaseUrl;
       } catch (err) {
         console.warn("Failed to get backend health, falling back to heuristic:", err);
       }
 
       if (!targetApiBaseUrl) {
+        targetApiBaseUrl = getApiBaseUrl();
+      }
+
+      // Self-healing: If we are on production, but targetApiBaseUrl is a local address,
+      // it means the backend is misconfigured and returning its default localhost fallback.
+      // We must override it with the public API URL.
+      const isProduction = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+      if (isProduction && (targetApiBaseUrl.includes("localhost") || targetApiBaseUrl.includes("127.0.0.1"))) {
         targetApiBaseUrl = getApiBaseUrl();
       }
 

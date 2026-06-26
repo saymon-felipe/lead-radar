@@ -15,3 +15,5 @@ worker/vendor/llama.cpp/cpu/*
 worker/vendor/llama.cpp/cuda/*
 !worker/vendor/llama.cpp/cpu/.gitkeep
 !worker/vendor/llama.cpp/cuda/.gitkeep
+dist-electron/
+**/dist-electron/

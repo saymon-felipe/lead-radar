@@ -22,6 +22,9 @@
         <button type="button" class="secondary compact" @click="$emit('bulkDownloadCsv')" title="Exportar base de leads das campanhas selecionadas em CSV">
           <i class="ri-download-2-line"></i> CSV
         </button>
+        <button type="button" class="danger compact" @click="$emit('bulkDelete')" title="Excluir campanha(s) selecionada(s)">
+          <i class="ri-delete-bin-line"></i> Excluir
+        </button>
         <button type="button" class="secondary compact ghost" @click="$emit('clearSelection')" title="Limpar seleção de campanhas">
           <i class="ri-close-line"></i>
         </button>
@@ -89,6 +92,7 @@ const emit = defineEmits<{
   bulkEmbeddings: [];
   bulkValidate: [];
   bulkDownloadCsv: [];
+  bulkDelete: [];
   clearSelection: [];
   discover: [id: number];
   stopDiscovery: [id: number];

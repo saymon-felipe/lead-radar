@@ -95,10 +95,48 @@ async function downloadFile(url: string, outputPath: string, log: Logger) {
   log("info", `Baixando ${url}`);
   const response = await fetchWithRetry(url, {});
   if (!response.body) throw new Error(`Resposta sem corpo para ${url}`);
+
+  const contentLength = Number(response.headers.get("content-length") || 0);
   await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
   const partialPath = `${outputPath}.partial`;
   await fs.promises.rm(partialPath, { force: true });
-  await pipeline(Readable.fromWeb(response.body as any), fs.createWriteStream(partialPath));
+
+  const writer = fs.createWriteStream(partialPath);
+  const reader = response.body.getReader();
+
+  let downloadedBytes = 0;
+  let lastLoggedPercent = -10;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      writer.write(value);
+      downloadedBytes += value.length;
+
+      if (contentLength > 0) {
+        const percent = Math.floor((downloadedBytes / contentLength) * 100);
+        if (percent >= lastLoggedPercent + 10) {
+          lastLoggedPercent = percent;
+          log("info", `Progresso do download: ${percent}% (${(downloadedBytes / 1024 / 1024).toFixed(1)} MB / ${(contentLength / 1024 / 1024).toFixed(1)} MB)`);
+        }
+      } else {
+        const mb = Math.floor(downloadedBytes / 1024 / 1024);
+        if (mb % 50 === 0 && mb > 0) {
+          log("info", `Progresso do download: ${mb} MB baixados`);
+        }
+      }
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      writer.end((err: any) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+
   await fs.promises.rename(partialPath, outputPath);
 }
 
@@ -360,4 +398,61 @@ export async function setupLocalAi(onLog?: Logger): Promise<LocalAiSetupResult> 
     logs,
     error
   };
+}
+
+export interface SetupState {
+  running: boolean;
+  completed: boolean;
+  error?: string;
+  logs: SetupLog[];
+}
+
+let activeSetupState: SetupState = {
+  running: false,
+  completed: false,
+  logs: []
+};
+
+export function getActiveSetupState(): SetupState {
+  return activeSetupState;
+}
+
+export function runSetupLocalAiInBackground(onFinished?: (result: LocalAiSetupResult) => void) {
+  if (activeSetupState.running) return;
+
+  activeSetupState = {
+    running: true,
+    completed: false,
+    logs: []
+  };
+
+  const onLog: Logger = (level, message) => {
+    activeSetupState.logs.push({ level, message });
+  };
+
+  setupLocalAi(onLog)
+    .then((result) => {
+      activeSetupState.running = false;
+      activeSetupState.completed = result.completed;
+      activeSetupState.error = result.error;
+      onFinished?.(result);
+    })
+    .catch((err) => {
+      activeSetupState.running = false;
+      activeSetupState.completed = false;
+      activeSetupState.error = err.message || String(err);
+      activeSetupState.logs.push({ level: "error", message: `Erro fatal no setup: ${activeSetupState.error}` });
+      onFinished?.({
+        started: true,
+        completed: false,
+        cpuRuntimeFound: false,
+        cudaRuntimeFound: false,
+        modelFound: false,
+        cpuServerPath: defaultCpuServerPath(),
+        cudaServerPath: defaultCudaServerPath(),
+        modelPath: defaultModelPath(),
+        logs: activeSetupState.logs,
+        error: activeSetupState.error
+      });
+    });
 }

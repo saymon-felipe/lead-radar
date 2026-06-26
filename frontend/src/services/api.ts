@@ -59,6 +59,8 @@ export const api = {
     request<Campaign>(`/api/campaigns/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   campaignAction: (id: number, action: "start" | "pause" | "complete") =>
     request<Campaign>(`/api/campaigns/${id}/${action}`, { method: "POST", body: "{}" }),
+  deleteCampaign: (id: number) =>
+    request<void>(`/api/campaigns/${id}`, { method: "DELETE" }),
   commercialReport: () => request<CommercialReport>("/api/reports/commercial"),
   campaignReport: (id: number) => request<CommercialReport>(`/api/campaigns/${id}/report`),
   campaignValidation: (id: number) => request<CampaignValidationReport>(`/api/campaigns/${id}/validation`),

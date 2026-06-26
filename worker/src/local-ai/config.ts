@@ -6,6 +6,12 @@ import { LocalAiConfig } from "./types";
 export const LOCAL_AI_CONFIG_PATH = path.join(os.homedir(), ".lead-radar-worker-ai.json");
 
 export function workerRootDir(): string {
+  // If we are running inside the packed app.asar file (which is read-only),
+  // we must write all AI binaries and models to a writable user directory.
+  if (__dirname.includes("app.asar")) {
+    return path.join(os.homedir(), ".lead-radar-worker-ai");
+  }
+
   // dist/local-ai/config.js -> worker/dist/local-ai/config.js, so .. from dist is worker/dist.
   // In dev, __dirname is worker/src/local-ai. Keep both cases stable.
   const cwd = process.cwd();

@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, ref, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { authSession } from "./services/session";
 import { api, type UserOrganization } from "./services/api";
@@ -175,6 +175,16 @@ onMounted(() => {
 
   void syncWorker();
   workerTimer = window.setInterval(syncWorker, 10000);
+});
+
+watch(() => authSession.state.user, async (newUser) => {
+  if (newUser?.organizationId) {
+    try {
+      await workerClient.syncWorkerSession(newUser.organizationId);
+    } catch (err) {
+      console.warn("Falha ao sincronizar worker por watcher de usuario:", err);
+    }
+  }
 });
 
 onUnmounted(() => {

@@ -116,10 +116,84 @@ export async function campaignRoutes(app: FastifyInstance) {
   });
 
   app.delete("/api/campaigns/:id", async (request, reply) => {
-    const { organizationId } = requireRole(request, "manager");
+    const { organizationId } = requireRole(request, "operator");
     const { id } = z.object({ id: z.coerce.number().int() }).parse(request.params);
     await findCampaign(organizationId, id);
-    await prisma.searchCampaign.delete({ where: { id } });
+
+    // Get all leads
+    const leads = await prisma.lead.findMany({
+      where: { campaignId: id, organizationId },
+      select: { id: true }
+    });
+    const leadIds = leads.map((l) => l.id);
+
+    // Get all discovery runs
+    const runs = await prisma.discoveryRun.findMany({
+      where: { campaignId: id, organizationId },
+      select: { id: true }
+    });
+    const runIds = runs.map((r) => r.id);
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete discovery run childs
+      if (runIds.length > 0) {
+        await tx.discoveryRunEvent.deleteMany({
+          where: { runId: { in: runIds } }
+        });
+        await tx.discoveryRunArtifact.deleteMany({
+          where: { runId: { in: runIds } }
+        });
+      }
+
+      // 2. Delete discovery runs
+      await tx.discoveryRun.deleteMany({
+        where: { campaignId: id, organizationId }
+      });
+
+      // 3. Delete discovery candidates
+      await tx.discoveryCandidate.deleteMany({
+        where: { campaignId: id, organizationId }
+      });
+
+      // 4. Delete lead childs
+      if (leadIds.length > 0) {
+        await tx.leadDigitalPresence.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.leadWebsiteSnapshot.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.leadSocialSnapshot.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.leadEmbedding.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.leadScore.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.leadAiReview.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.generatedMessage.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+        await tx.commercialInteraction.deleteMany({
+          where: { leadId: { in: leadIds }, organizationId }
+        });
+      }
+
+      // 5. Delete leads
+      await tx.lead.deleteMany({
+        where: { campaignId: id, organizationId }
+      });
+
+      // 6. Delete campaign itself
+      await tx.searchCampaign.delete({
+        where: { id }
+      });
+    });
+
     reply.code(204);
   });
 

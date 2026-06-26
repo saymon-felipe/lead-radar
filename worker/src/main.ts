@@ -100,7 +100,12 @@ function tokenExpiresSoon(): boolean {
 }
 
 async function refreshSessionIfNeeded(force = false): Promise<boolean> {
-  if (!config.refreshToken) return Boolean(config.workerToken);
+  if (!config.refreshToken) {
+    if (force) {
+      return false;
+    }
+    return Boolean(config.workerToken);
+  }
   if (!force && config.workerToken && !tokenExpiresSoon()) return true;
 
   try {
@@ -116,6 +121,9 @@ async function refreshSessionIfNeeded(force = false): Promise<boolean> {
     return true;
   } catch (error: any) {
     console.error("Worker session refresh failed:", describeAxiosError(error));
+    if (error.response?.status === 400 || error.response?.status === 401 || error.response?.status === 403) {
+      logout();
+    }
     return false;
   }
 }
@@ -269,9 +277,16 @@ async function sendHeartbeat() {
     }
   } catch (error: any) {
     console.error("Heartbeat failed:", describeAxiosError(error));
-    if (error.response?.status === 401) {
+    const isAuthError =
+      error.message === "Worker não autenticado ou sessão expirada" ||
+      error.response?.status === 401 ||
+      error.response?.status === 403;
+
+    if (isAuthError) {
       const refreshed = await refreshSessionIfNeeded(true);
-      if (!refreshed) logout();
+      if (!refreshed) {
+        logout();
+      }
     }
   }
 }
@@ -482,6 +497,10 @@ function startExpressServer() {
     res.json(result);
   });
 
+  server.get("/v1/local-ai/setup", (req, res) => {
+    res.json(localAi.getSetupState());
+  });
+
   server.post("/v1/local-ai/test", async (req, res) => {
     const result = await localAi.testRuntime();
     res.status(result.ok ? 200 : 503).json(result);
@@ -535,10 +554,6 @@ function startExpressServer() {
         return res.status(400).json({ error: "workerToken is required" });
       }
 
-      config.workerToken = workerToken;
-      config.refreshToken = refreshToken;
-      config.expiresAt = expiresAt;
-
       let lastError: any;
       let profileRes: any;
       for (const candidateBaseUrl of candidateApiBaseUrls(apiBaseUrl)) {
@@ -552,9 +567,13 @@ function startExpressServer() {
       }
 
       if (!profileRes) {
+        logout();
         throw new Error(`Nenhuma API do Lead Radar respondeu para o worker: ${describeAxiosError(lastError)}`);
       }
 
+      config.workerToken = workerToken;
+      config.refreshToken = refreshToken;
+      config.expiresAt = expiresAt;
       config.loginRequestedAt = undefined;
       saveConfig();
       activeOrgName = profileRes.data.organization?.name || "";

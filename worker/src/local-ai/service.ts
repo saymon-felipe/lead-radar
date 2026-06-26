@@ -1,7 +1,7 @@
-﻿import { loadLocalAiConfig, saveLocalAiConfig } from "./config";
+import { loadLocalAiConfig, saveLocalAiConfig } from "./config";
 import { safeParseJson, truncate } from "./json";
 import { LlamaCppClient } from "./llamaCppClient";
-import { setupLocalAi } from "./setup";
+import { setupLocalAi, getActiveSetupState, runSetupLocalAiInBackground } from "./setup";
 import { recordLocalAiMetric, getLocalAiTelemetry } from "./telemetry";
 import {
   HtmlCleaningInput,
@@ -68,10 +68,14 @@ export class LocalAiService {
   }
 
   async setupRuntime() {
-    return setupLocalAi((level, message) => {
-      const prefix = level === "error" ? "[local-ai setup error]" : level === "warn" ? "[local-ai setup warn]" : "[local-ai setup]";
-      console.log(prefix, message);
+    runSetupLocalAiInBackground((result) => {
+      console.log("[local-ai setup finished]", result.completed ? "Success" : "Failed", result.error || "");
     });
+    return getActiveSetupState();
+  }
+
+  getSetupState() {
+    return getActiveSetupState();
   }
 
   async telemetry() {

@@ -375,13 +375,16 @@ export function renderWorkerPanelV2() {
     }
   }
   async function setupRuntime(){
-    var result = await action('setupRuntimeBtn','Preparando arquivos da IA local...', function(){
-      return api('/v1/local-ai/setup', { method:'POST' });
-    });
-    if(result){
+    try {
+      setBusy('setupRuntimeBtn', true);
+      setNotice('Iniciando preparacao da IA local...', '');
+      var result = await api('/v1/local-ai/setup', { method:'POST' });
       state.setup = result;
-      setNotice(result.completed ? 'IA local preparada.' : 'Setup terminou com pendencias. Veja os logs abaixo.', result.completed ? 'success' : 'error');
       render();
+      await refresh(false);
+    } catch (error) {
+      setBusy('setupRuntimeBtn', false);
+      setNotice(error.message || String(error), 'error');
     }
   }
   async function startRuntime(){
@@ -544,10 +547,43 @@ export function renderWorkerPanelV2() {
   }
   async function refresh(announce){
     try {
-      var data = await Promise.all([api('/v1/health'), api('/v1/local-ai/status'), api('/v1/local-ai/telemetry')]);
+      var data = await Promise.all([
+        api('/v1/health'),
+        api('/v1/local-ai/status'),
+        api('/v1/local-ai/telemetry'),
+        api('/v1/local-ai/setup')
+      ]);
       state.health = data[0];
       state.ai = data[1];
       state.telemetry = data[2];
+      state.setup = data[3];
+
+      if (state.setup.running && !state.pollingSetup) {
+        state.pollingSetup = true;
+        setBusy('setupRuntimeBtn', true);
+        var pollTimer = setInterval(async function() {
+          try {
+            var current = await api('/v1/local-ai/setup', { method:'GET' });
+            state.setup = current;
+            render();
+
+            if (!current.running) {
+              clearInterval(pollTimer);
+              state.pollingSetup = false;
+              setBusy('setupRuntimeBtn', false);
+              setNotice(current.completed ? 'IA local preparada.' : 'Setup terminou com pendencias. Veja os logs abaixo.', current.completed ? 'success' : 'error');
+              await refresh(false);
+            }
+          } catch (pollErr) {
+            clearInterval(pollTimer);
+            state.pollingSetup = false;
+            setBusy('setupRuntimeBtn', false);
+            setNotice('Erro ao obter progresso: ' + pollErr.message, 'error');
+            render();
+          }
+        }, 1000);
+      }
+
       if (state.dirty || isEditingAiForm()) {
         if(announce) setNotice('Dados recebidos. Termine de salvar suas alteracoes para atualizar a tela.', '');
         return;

@@ -61,6 +61,33 @@
       </div>
     </Transition>
 
+    <Transition name="campaign-modal-fade">
+      <div v-if="deleteConfirmation.visible" class="campaign-modal-backdrop" @click.self="cancelDelete">
+        <section class="campaign-modal-card campaign-modal-card--error" role="dialog" aria-modal="true">
+          <button class="campaign-modal-close" type="button" title="Fechar" @click="cancelDelete">
+            <i class="ri-close-line"></i>
+          </button>
+          <div class="campaign-modal-icon">
+            <i class="ri-delete-bin-line"></i>
+          </div>
+          <div>
+            <p class="campaign-modal-eyebrow">Ação Irreversível</p>
+            <h3>Excluir Campanha(s)</h3>
+            <p>
+              Tem certeza que deseja excluir as <strong>{{ deleteConfirmation.count }}</strong> campanha(s) selecionada(s)?
+              Esta ação excluirá permanentemente a(s) campanha(s) e todos os leads vinculados a ela(s).
+            </p>
+          </div>
+          <div class="campaign-modal-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+            <button type="button" class="secondary" @click="cancelDelete">Cancelar</button>
+            <button type="button" class="danger" :disabled="deleteConfirmation.loading" @click="executeDelete">
+              {{ deleteConfirmation.loading ? 'Excluindo...' : 'Excluir Definitivamente' }}
+            </button>
+          </div>
+        </section>
+      </div>
+    </Transition>
+
     <CampaignGrid
       :campaigns="campaigns"
       :columns="campaignColumns"
@@ -73,6 +100,7 @@
       @bulk-embeddings="bulkEmbeddings"
       @bulk-validate="bulkValidate"
       @bulk-download-csv="bulkDownloadCsv"
+      @bulk-delete="bulkDelete"
       @clear-selection="clearSelection"
       @discover="discover($event, selectedDiscoveryLevel($event))"
       @stop-discovery="stopDiscovery"
@@ -149,6 +177,12 @@ export default defineComponent({
         type: "info" as "info" | "success" | "warning" | "error",
         title: "",
         message: ""
+      },
+      deleteConfirmation: {
+        visible: false,
+        count: 0,
+        loading: false,
+        campaignIds: [] as number[]
       }
     };
   },
@@ -436,6 +470,36 @@ export default defineComponent({
       } catch (error) {
         this.error = this.friendlyError(error, "Erro ao exportar CSVs");
         this.showNotice("error", "CSV nao exportado", this.error);
+      }
+    },
+    async bulkDelete() {
+      const ids = this.getSelectedIds();
+      if (ids.length === 0) return;
+      this.deleteConfirmation = {
+        visible: true,
+        count: ids.length,
+        loading: false,
+        campaignIds: ids
+      };
+    },
+    cancelDelete() {
+      this.deleteConfirmation.visible = false;
+    },
+    async executeDelete() {
+      this.deleteConfirmation.loading = true;
+      try {
+        for (const id of this.deleteConfirmation.campaignIds) {
+          await api.deleteCampaign(id);
+        }
+        await this.load();
+        this.clearSelection();
+        this.showNotice("success", "Exclusão Concluída", "A(s) campanha(s) e seus leads vinculados foram excluídos com sucesso.");
+      } catch (error) {
+        this.error = this.friendlyError(error, "Erro ao excluir campanha(s)");
+        this.showNotice("error", "Exclusão Falhou", this.error);
+      } finally {
+        this.deleteConfirmation.visible = false;
+        this.deleteConfirmation.loading = false;
       }
     }
   }

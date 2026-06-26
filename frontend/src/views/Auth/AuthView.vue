@@ -81,6 +81,7 @@
 <script lang="ts">
 import { defineComponent } from "vue";
 import { authSession } from "../../services/session";
+import { workerClient } from "../../services/workerClient";
 
 export default defineComponent({
   name: "AuthView",
@@ -105,7 +106,12 @@ export default defineComponent({
       this.loading = true;
       this.error = "";
       try {
-        await authSession.login(this.loginForm);
+        const session = await authSession.login(this.loginForm);
+        if (session?.user?.organizationId) {
+          await workerClient.syncWorkerSession(session.user.organizationId).catch((err) => {
+            console.warn("Falha ao sincronizar worker no login:", err);
+          });
+        }
         await this.$router.push("/dashboard");
       } catch (error) {
         this.error = error instanceof Error ? error.message : "Falha ao entrar";
@@ -117,7 +123,12 @@ export default defineComponent({
       this.loading = true;
       this.error = "";
       try {
-        await authSession.register(this.registerForm);
+        const session = await authSession.register(this.registerForm);
+        if (session?.user?.organizationId) {
+          await workerClient.syncWorkerSession(session.user.organizationId).catch((err) => {
+            console.warn("Falha ao sincronizar worker no registro:", err);
+          });
+        }
         await this.$router.push("/dashboard");
       } catch (error) {
         this.error = error instanceof Error ? error.message : "Falha ao criar empresa";
